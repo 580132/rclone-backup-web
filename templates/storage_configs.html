@@ -1,0 +1,331 @@
+{% extends "base.html" %}
+
+{% block title %}存储配置 - RClone备份系统{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center fade-in-up">
+    <div>
+        <h1 class="page-title">
+            <i class="bi bi-cloud"></i>存储配置
+        </h1>
+        <p class="text-muted mb-0">管理云存储服务配置</p>
+    </div>
+    <div>
+        <button type="button" class="btn btn-gradient" data-bs-toggle="modal" data-bs-target="#addConfigModal">
+            <i class="bi bi-plus-circle me-2"></i>添加存储配置
+        </button>
+    </div>
+</div>
+
+<!-- 存储配置列表 -->
+<div class="row g-4 fade-in-up" style="animation-delay: 0.2s;">
+    {% if configs %}
+        {% for config in configs %}
+        <div class="col-md-6 col-lg-4">
+            <div class="glass-card h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="d-flex align-items-center">
+                        <div class="d-inline-flex align-items-center justify-content-center rounded-circle me-3"
+                             style="width: 40px; height: 40px; background: #000000;">
+                            <i class="bi bi-cloud text-white"></i>
+                        </div>
+                        <h6 class="mb-0 fw-bold" style="color: #000000;">{{ config.name }}</h6>
+                    </div>
+                    <span class="badge-modern badge-{{ 'success' if config.is_active else 'secondary' }}">
+                        {{ '活跃' if config.is_active else '禁用' }}
+                    </span>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex align-items-center mb-2">
+                        <strong class="me-2">类型：</strong>
+                        {% if config.storage_type == 's3' %}
+                            <span class="d-flex align-items-center">
+                                <i class="bi bi-amazon me-1 text-warning"></i>Amazon S3
+                            </span>
+                        {% elif config.storage_type == 'google_drive' %}
+                            <span class="d-flex align-items-center">
+                                <i class="bi bi-google me-1 text-primary"></i>Google Drive
+                            </span>
+                        {% elif config.storage_type == 'onedrive' %}
+                            <span class="d-flex align-items-center">
+                                <i class="bi bi-microsoft me-1 text-info"></i>OneDrive
+                            </span>
+                        {% elif config.storage_type == 'dropbox' %}
+                            <span class="d-flex align-items-center">
+                                <i class="bi bi-dropbox me-1 text-primary"></i>Dropbox
+                            </span>
+                        {% elif config.storage_type == 'ftp' %}
+                            <span class="d-flex align-items-center">
+                                <i class="bi bi-hdd-network me-1 text-secondary"></i>FTP
+                            </span>
+                        {% elif config.storage_type == 'sftp' %}
+                            <span class="d-flex align-items-center">
+                                <i class="bi bi-shield-lock me-1 text-success"></i>SFTP
+                            </span>
+                        {% else %}
+                            <span>{{ config.storage_type }}</span>
+                        {% endif %}
+                    </div>
+                    <div class="text-muted small">
+                        <i class="bi bi-calendar me-1"></i>
+                        创建时间：{{ config.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    </div>
+                </div>
+                {% if config.backup_tasks %}
+                <div class="alert-modern alert-info mb-3">
+                    <i class="bi bi-archive me-2"></i>
+                    关联 {{ config.backup_tasks|length }} 个备份任务
+                </div>
+                {% endif %}
+
+                <div class="d-flex gap-2 mt-auto">
+                    <button type="button"
+                            class="btn btn-gradient-success btn-sm flex-fill"
+                            onclick="testConnection({{ config.id }})">
+                        <i class="bi bi-wifi me-1"></i>测试
+                    </button>
+                    <button type="button"
+                            class="btn btn-gradient btn-sm flex-fill"
+                            onclick="alert('功能开发中...')">
+                        <i class="bi bi-pencil me-1"></i>编辑
+                    </button>
+                    <button type="button"
+                            class="btn btn-gradient-danger btn-sm flex-fill"
+                            onclick="deleteConfig({{ config.id }}, '{{ config.name }}')">
+                        <i class="bi bi-trash me-1"></i>删除
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+    <div class="col-12">
+        <div class="glass-card text-center py-5">
+            <div class="d-inline-flex align-items-center justify-content-center rounded-circle mb-4"
+                 style="width: 100px; height: 100px; background: rgba(108, 117, 125, 0.1);">
+                <i class="bi bi-cloud-slash text-muted" style="font-size: 3rem;"></i>
+            </div>
+            <h4 class="mb-3 fw-bold">暂无存储配置</h4>
+            <p class="text-muted mb-4">请添加至少一个存储配置以开始使用备份功能</p>
+            <button type="button" class="btn btn-gradient" data-bs-toggle="modal" data-bs-target="#addConfigModal">
+                <i class="bi bi-plus-circle me-2"></i>添加第一个存储配置
+            </button>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- 添加存储配置模态框 -->
+<div class="modal fade" id="addConfigModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-cloud-plus"></i> 添加存储配置
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('create_storage_config') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">配置名称 *</label>
+                        <input type="text" class="form-control" id="name" name="name" required
+                               placeholder="例如：我的S3存储">
+                        <div class="form-text">用于识别此存储配置的名称</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="storage_type" class="form-label">存储类型 *</label>
+                        <select class="form-select" id="storage_type" name="storage_type" required onchange="showConfigFields()">
+                            <option value="">请选择存储类型</option>
+                            {% for storage_type in storage_types %}
+                            <option value="{{ storage_type.value }}">{{ storage_type.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <!-- S3配置字段 -->
+                    <div id="s3_fields" class="config-fields" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="access_key" class="form-label">Access Key *</label>
+                                    <input type="text" class="form-control" id="access_key" name="access_key">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="secret_key" class="form-label">Secret Key *</label>
+                                    <input type="password" class="form-control" id="secret_key" name="secret_key">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="region" class="form-label">区域</label>
+                                    <input type="text" class="form-control" id="region" name="region" value="us-east-1">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="endpoint" class="form-label">自定义端点</label>
+                                    <input type="text" class="form-control" id="endpoint" name="endpoint"
+                                           placeholder="可选，用于S3兼容存储">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- FTP配置字段 -->
+                    <div id="ftp_fields" class="config-fields" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                    <label for="host" class="form-label">主机地址 *</label>
+                                    <input type="text" class="form-control" id="host" name="host"
+                                           placeholder="例如：ftp.example.com">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="port" class="form-label">端口</label>
+                                    <input type="number" class="form-control" id="port" name="port" value="21">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="username" class="form-label">用户名 *</label>
+                                    <input type="text" class="form-control" id="username" name="username">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="password" class="form-label">密码 *</label>
+                                    <input type="password" class="form-control" id="password" name="password">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 其他存储类型的配置字段可以在这里添加 -->
+                    <div id="other_fields" class="config-fields" style="display: none;">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            此存储类型的配置功能正在开发中，敬请期待。
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle"></i> 创建配置
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- 测试结果模态框 -->
+<div class="modal fade" id="testResultModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-wifi"></i> 连接测试结果
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="testResult"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function showConfigFields() {
+    const storageType = document.getElementById('storage_type').value;
+    const allFields = document.querySelectorAll('.config-fields');
+    
+    // 隐藏所有配置字段
+    allFields.forEach(field => field.style.display = 'none');
+    
+    // 显示对应的配置字段
+    if (storageType === 's3') {
+        document.getElementById('s3_fields').style.display = 'block';
+    } else if (storageType === 'ftp' || storageType === 'sftp') {
+        document.getElementById('ftp_fields').style.display = 'block';
+    } else if (storageType) {
+        document.getElementById('other_fields').style.display = 'block';
+    }
+}
+
+function testConnection(configId) {
+    const button = event.target;
+    const originalText = button.innerHTML;
+    
+    // 显示加载状态
+    button.innerHTML = '<i class="bi bi-hourglass-split"></i> 测试中...';
+    button.disabled = true;
+    
+    fetch(`/storage-configs/${configId}/test`)
+        .then(response => response.json())
+        .then(data => {
+            const resultDiv = document.getElementById('testResult');
+            
+            if (data.success) {
+                resultDiv.innerHTML = `
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle"></i> 连接成功！
+                        <br><small>${data.message}</small>
+                    </div>
+                `;
+            } else {
+                resultDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-x-circle"></i> 连接失败
+                        <br><small>${data.message}</small>
+                    </div>
+                `;
+            }
+            
+            new bootstrap.Modal(document.getElementById('testResultModal')).show();
+        })
+        .catch(error => {
+            const resultDiv = document.getElementById('testResult');
+            resultDiv.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle"></i> 测试出错
+                    <br><small>${error.message}</small>
+                </div>
+            `;
+            new bootstrap.Modal(document.getElementById('testResultModal')).show();
+        })
+        .finally(() => {
+            // 恢复按钮状态
+            button.innerHTML = originalText;
+            button.disabled = false;
+        });
+}
+
+function deleteConfig(configId, configName) {
+    if (confirmDelete(`确定要删除存储配置"${configName}"吗？`)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/storage-configs/${configId}/delete`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+</script>
+{% endblock %}

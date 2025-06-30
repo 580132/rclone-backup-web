@@ -1,0 +1,6 @@
+Flask==2.3.3
+Flask-SQLAlchemy==3.0.5
+APScheduler==3.10.4
+cryptography==41.0.4
+Werkzeug==2.3.7
+python-crontab==3.0.0
