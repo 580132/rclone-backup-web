@@ -477,5 +477,79 @@ port = {config_data.get('port', 21)}
         except Exception as e:
             self.logger.error(f"Failed to delete config {config_name}: {e}")
             return False
-    
+
+    def parse_config_file(self) -> Dict[str, Dict[str, str]]:
+        """解析rclone配置文件，返回所有配置段"""
+        try:
+            config_path = self.get_config_path()
+            if not os.path.exists(config_path):
+                return {}
+
+            with open(config_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            return self._parse_config_content(content)
+        except Exception as e:
+            self.logger.error(f"Failed to parse config file: {e}")
+            return {}
+
+    def get_config_section(self, config_name: str) -> Optional[Dict[str, str]]:
+        """获取指定配置段的内容"""
+        try:
+            all_configs = self.parse_config_file()
+            return all_configs.get(config_name)
+        except Exception as e:
+            self.logger.error(f"Failed to get config section {config_name}: {e}")
+            return None
+
+    def _parse_config_content(self, content: str) -> Dict[str, Dict[str, str]]:
+        """解析配置文件内容"""
+        configs = {}
+        current_section = None
+        current_config = {}
+
+        for line in content.split('\n'):
+            line = line.strip()
+
+            # 跳过空行和注释
+            if not line or line.startswith('#') or line.startswith(';'):
+                continue
+
+            # 检查是否是配置段开始
+            if line.startswith('[') and line.endswith(']'):
+                # 保存上一个配置段
+                if current_section and current_config:
+                    configs[current_section] = current_config
+
+                # 开始新的配置段
+                current_section = line[1:-1]
+                current_config = {}
+            elif current_section and '=' in line:
+                # 解析配置项
+                key, value = line.split('=', 1)
+                current_config[key.strip()] = value.strip()
+
+        # 保存最后一个配置段
+        if current_section and current_config:
+            configs[current_section] = current_config
+
+        return configs
+
+    def list_config_names(self) -> List[str]:
+        """列出所有配置名称"""
+        try:
+            all_configs = self.parse_config_file()
+            return list(all_configs.keys())
+        except Exception as e:
+            self.logger.error(f"Failed to list config names: {e}")
+            return []
+
+    def config_exists_in_file(self, config_name: str) -> bool:
+        """检查配置是否存在于rclone配置文件中"""
+        try:
+            config_names = self.list_config_names()
+            return config_name in config_names
+        except Exception as e:
+            self.logger.error(f"Failed to check config existence: {e}")
+            return False
 

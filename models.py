@@ -25,22 +25,53 @@ class User(db.Model):
         return f'<User {self.username}>'
 
 class StorageConfig(db.Model):
-    """存储配置模型"""
+    """存储配置模型 - 现在主要作为索引，实际配置从rclone文件读取"""
     __tablename__ = 'storage_configs'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     storage_type = db.Column(db.String(50), nullable=False)  # s3, google_drive, etc.
     rclone_config_name = db.Column(db.String(100), nullable=False)
-    config_data = db.Column(db.Text)  # JSON格式的配置数据
+    description = db.Column(db.Text)  # 配置描述
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
     # 关联的备份任务
     backup_tasks = db.relationship('BackupTask', backref='storage_config', lazy=True)
-    
+
+    # 关联的配置历史版本
+    config_history = db.relationship('StorageConfigHistory', backref='storage_config',
+                                   lazy=True, order_by='StorageConfigHistory.version.desc()')
+
+    @property
+    def latest_config_version(self):
+        """获取最新的配置版本"""
+        return self.config_history[0] if self.config_history else None
+
     def __repr__(self):
         return f'<StorageConfig {self.name}>'
+
+
+class StorageConfigHistory(db.Model):
+    """存储配置历史版本模型 - 存储配置的历史版本"""
+    __tablename__ = 'storage_config_history'
+
+    id = db.Column(db.Integer, primary_key=True)
+    storage_config_id = db.Column(db.Integer, db.ForeignKey('storage_configs.id'), nullable=False)
+    version = db.Column(db.Integer, nullable=False)  # 版本号
+    config_data = db.Column(db.Text, nullable=False)  # JSON格式的配置数据
+    rclone_config_content = db.Column(db.Text)  # rclone配置文件内容
+    change_reason = db.Column(db.String(255))  # 变更原因
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by = db.Column(db.String(100))  # 创建者
+
+    # 复合唯一索引：同一配置的版本号不能重复
+    __table_args__ = (db.UniqueConstraint('storage_config_id', 'version', name='_storage_config_version_uc'),)
+
+    def __repr__(self):
+        return f'<StorageConfigHistory {self.storage_config_id} v{self.version}>'
+
 
 class BackupTask(db.Model):
     """备份任务模型"""
