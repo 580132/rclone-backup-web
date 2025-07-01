@@ -134,41 +134,84 @@ def create_app(config_name='default'):
     def create_storage_config():
         """创建存储配置"""
         try:
+            # 记录所有表单数据用于调试
+            app.logger.debug(f"Form data received: {dict(request.form)}")
+
             name = request.form.get('name', '').strip()
             storage_type = request.form.get('storage_type', '').strip()
-            
+
+            app.logger.info(f"Creating storage config - name: '{name}', type: '{storage_type}'")
+
             if not name or not storage_type:
+                app.logger.error(f"Missing required fields - name: '{name}', storage_type: '{storage_type}'")
                 flash('请填写配置名称和存储类型', 'error')
                 return redirect(url_for('storage_configs'))
-            
+
             # 检查名称是否已存在
             if StorageConfig.query.filter_by(name=name).first():
+                app.logger.warning(f"Storage config name already exists: {name}")
                 flash('配置名称已存在', 'error')
                 return redirect(url_for('storage_configs'))
             
             # 收集配置数据
             config_data = {}
             if storage_type in ['s3', 'alibaba_oss', 'cloudflare_r2']:
+                # 根据存储类型读取对应的字段
+                if storage_type == 's3':
+                    raw_access_key = request.form.get('access_key', '')
+                    raw_secret_key = request.form.get('secret_key', '')
+                    raw_region = request.form.get('region', '')
+                    raw_endpoint = request.form.get('endpoint', '')
+                    raw_bucket = request.form.get('bucket', '')
+                elif storage_type == 'alibaba_oss':
+                    raw_access_key = request.form.get('oss_access_key', '')  # 阿里云OSS使用专用字段名
+                    raw_secret_key = request.form.get('oss_secret_key', '')
+                    raw_region = request.form.get('region', '')
+                    raw_endpoint = request.form.get('oss_endpoint', '')
+                    raw_bucket = request.form.get('bucket', '')
+                elif storage_type == 'cloudflare_r2':
+                    raw_access_key = request.form.get('r2_access_key', '')  # R2使用专用字段名
+                    raw_secret_key = request.form.get('r2_secret_key', '')
+                    raw_region = request.form.get('region', '')
+                    raw_endpoint = request.form.get('r2_endpoint', '')
+                    raw_bucket = request.form.get('bucket', '')
+
+                app.logger.debug(f"Raw form values for {storage_type} - access_key: '{raw_access_key}', secret_key: '{raw_secret_key}', region: '{raw_region}', endpoint: '{raw_endpoint}', bucket: '{raw_bucket}'")
+
                 config_data = {
-                    'access_key': request.form.get('access_key', '').strip(),
-                    'secret_key': request.form.get('secret_key', '').strip(),
-                    'region': request.form.get('region', '').strip(),
-                    'endpoint': request.form.get('endpoint', '').strip(),
-                    'bucket': request.form.get('bucket', '').strip()
+                    'access_key': raw_access_key.strip(),
+                    'secret_key': raw_secret_key.strip(),
+                    'region': raw_region.strip(),
+                    'endpoint': raw_endpoint.strip(),
+                    'bucket': raw_bucket.strip()
                 }
+
+                app.logger.info(f"Processed config data: {config_data}")
 
                 # 设置默认值
                 if storage_type == 's3' and not config_data['region']:
                     config_data['region'] = 'us-east-1'
                 elif storage_type == 'alibaba_oss' and not config_data['region']:
                     config_data['region'] = 'oss-cn-hangzhou'
+                elif storage_type == 'cloudflare_r2':
+                    config_data['region'] = 'auto'  # Cloudflare R2 固定使用 auto
+
+                app.logger.info(f"Final config data after defaults: {config_data}")
+
+                # 验证必填字段
+                if storage_type == 'cloudflare_r2':
+                    if not config_data['access_key'] or not config_data['secret_key'] or not config_data['endpoint']:
+                        app.logger.error(f"Missing required fields for Cloudflare R2: access_key='{config_data['access_key']}', secret_key='{config_data['secret_key']}', endpoint='{config_data['endpoint']}'")
+                        flash('请填写所有必填字段：Access Key ID、Secret Access Key、Endpoint', 'error')
+                        return redirect(url_for('storage_configs'))
 
             elif storage_type == 'google_drive':
                 config_data = {
                     'client_id': request.form.get('client_id', '').strip(),
                     'client_secret': request.form.get('client_secret', '').strip(),
-                    'token': request.form.get('token', '').strip(),
-                    'root_folder_id': request.form.get('root_folder_id', '').strip()
+                    'scope': request.form.get('scope', 'drive').strip(),
+                    'root_folder_id': request.form.get('root_folder_id', '').strip(),
+                    'service_account_credentials': request.form.get('service_account_credentials', '').strip()
                 }
 
             elif storage_type == 'sftp':

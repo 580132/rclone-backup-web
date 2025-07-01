@@ -17,27 +17,89 @@ class RcloneService:
         # 确保配置目录存在
         os.makedirs(self.config_dir, exist_ok=True)
     
-    def get_config_path(self, config_name: str) -> str:
+    def get_config_path(self, config_name: str = None) -> str:
         """获取配置文件路径"""
-        return os.path.join(self.config_dir, f"{config_name}.conf")
+        # 使用rclone标准配置文件名
+        return os.path.join(self.config_dir, 'rclone.conf')
     
     def create_config(self, name: str, storage_type: str, config_data: Dict) -> bool:
         """创建rclone配置"""
         try:
-            config_path = self.get_config_path(name)
-            
+            config_path = self.get_config_path()
+            self.logger.info(f"Creating rclone config '{name}' of type '{storage_type}' at {config_path}")
+            self.logger.info(f"Config data: {config_data}")
+
             # 根据存储类型生成配置内容
             config_content = self._generate_config_content(name, storage_type, config_data)
             if not config_content:
+                self.logger.error(f"Failed to generate config content for {name}")
                 return False
-            
+
+            self.logger.info(f"Generated config content:\n{config_content}")
+
+            # 读取现有配置文件
+            existing_config = ""
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    existing_config = f.read()
+                self.logger.info(f"Existing config file size: {len(existing_config)} chars")
+            else:
+                self.logger.info("No existing config file found")
+
+            # 删除同名配置（如果存在）
+            existing_config = self._remove_config_section(existing_config, name)
+
+            # 追加新配置
+            new_config = existing_config + "\n" + config_content if existing_config else config_content
+
+            # 写入配置文件
             with open(config_path, 'w', encoding='utf-8') as f:
-                f.write(config_content)
-            
-            self.logger.info(f"Created rclone config: {name}")
+                f.write(new_config)
+
+            self.logger.info(f"Successfully created rclone config: {name}")
+            self.logger.info(f"Final config file content:\n{new_config}")
             return True
         except Exception as e:
             self.logger.error(f"Failed to create rclone config {name}: {e}")
+            return False
+
+    def _remove_config_section(self, config_content: str, section_name: str) -> str:
+        """从配置内容中删除指定的配置段"""
+        lines = config_content.split('\n')
+        result_lines = []
+        in_target_section = False
+
+        for line in lines:
+            line = line.strip()
+
+            # 检查是否是配置段开始
+            if line.startswith('[') and line.endswith(']'):
+                section = line[1:-1]
+                if section == section_name:
+                    in_target_section = True
+                    continue  # 跳过这一行
+                else:
+                    in_target_section = False
+
+            # 如果不在目标段中，保留这一行
+            if not in_target_section:
+                result_lines.append(line)
+
+        return '\n'.join(result_lines).strip()
+
+    def _config_section_exists(self, config_path: str, section_name: str) -> bool:
+        """检查配置文件中是否存在指定的配置段"""
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            lines = content.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line == f'[{section_name}]':
+                    return True
+            return False
+        except Exception:
             return False
     
     def _generate_config_content(self, name: str, storage_type: str, config_data: Dict) -> Optional[str]:
@@ -85,12 +147,17 @@ location_constraint = {config_data.get('region', 'oss-cn-hangzhou')}
 
             elif storage_type == 'cloudflare_r2':
                 # Cloudflare R2专用配置
+                endpoint = config_data['endpoint']
+                # 确保endpoint包含https://前缀
+                if not endpoint.startswith('https://') and not endpoint.startswith('http://'):
+                    endpoint = f"https://{endpoint}"
+
                 return f"""[{name}]
 type = s3
 provider = Cloudflare
 access_key_id = {config_data['access_key']}
 secret_access_key = {config_data['secret_key']}
-endpoint = {config_data['endpoint']}
+endpoint = {endpoint}
 region = auto
 """
 
@@ -99,21 +166,27 @@ region = auto
                 config = f"""[{name}]
 type = drive
 """
-                # 如果有客户端凭据
-                if config_data.get('client_id') and config_data.get('client_secret'):
+                # 客户端凭据（可选，留空使用rclone默认值）
+                if config_data.get('client_id'):
                     config += f"client_id = {config_data['client_id']}\n"
+                if config_data.get('client_secret'):
                     config += f"client_secret = {config_data['client_secret']}\n"
 
-                # 如果有访问令牌
-                if config_data.get('token'):
-                    config += f"token = {config_data['token']}\n"
+                # 服务账户凭据
+                if config_data.get('service_account_credentials'):
+                    config += f"service_account_credentials = {config_data['service_account_credentials']}\n"
 
-                # 设置范围
-                config += "scope = drive\n"
+                # 访问范围
+                scope = config_data.get('scope', 'drive')
+                config += f"scope = {scope}\n"
 
-                # 可选配置
+                # 根文件夹ID
                 if config_data.get('root_folder_id'):
                     config += f"root_folder_id = {config_data['root_folder_id']}\n"
+
+                # 如果有访问令牌（OAuth2授权后获得）
+                if config_data.get('token'):
+                    config += f"token = {config_data['token']}\n"
 
                 return config
 
@@ -162,73 +235,104 @@ port = {config_data.get('port', 21)}
     def get_supported_types(self) -> List[Dict[str, str]]:
         """获取支持的存储类型"""
         return [
-            {
-                'id': 's3',
-                'name': 'Amazon S3',
-                'description': 'Amazon S3 兼容存储',
-                'icon': 'bi-amazon'
-            },
-            {
-                'id': 'alibaba_oss',
-                'name': '阿里云 OSS',
-                'description': '阿里云对象存储服务',
-                'icon': 'bi-cloud'
-            },
-            {
-                'id': 'cloudflare_r2',
-                'name': 'Cloudflare R2',
-                'description': 'Cloudflare R2 对象存储',
-                'icon': 'bi-cloud'
-            },
-            {
-                'id': 'google_drive',
-                'name': 'Google Drive',
-                'description': 'Google Drive 云存储',
-                'icon': 'bi-google'
-            },
-            {
-                'id': 'sftp',
-                'name': 'SFTP',
-                'description': 'SSH 文件传输协议',
-                'icon': 'bi-shield-lock'
-            },
-            {
-                'id': 'ftp',
-                'name': 'FTP',
-                'description': '文件传输协议',
-                'icon': 'bi-hdd-network'
-            }
+            {'value': 's3', 'label': 'Amazon S3'},
+            {'value': 'alibaba_oss', 'label': '阿里云 OSS'},
+            {'value': 'cloudflare_r2', 'label': 'Cloudflare R2'},
+            {'value': 'google_drive', 'label': 'Google Drive'},
+            {'value': 'sftp', 'label': 'SFTP'},
+            {'value': 'ftp', 'label': 'FTP'}
         ]
     
     def test_connection(self, config_name: str) -> Tuple[bool, str]:
         """测试rclone连接"""
         try:
-            config_path = self.get_config_path(config_name)
+            config_path = self.get_config_path()
+            self.logger.info(f"Testing connection for {config_name}, config path: {config_path}")
+
             if not os.path.exists(config_path):
+                self.logger.error(f"Config file does not exist: {config_path}")
                 return False, "配置文件不存在"
+
+            # 检查配置段是否存在
+            if not self._config_section_exists(config_path, config_name):
+                self.logger.error(f"Config section '{config_name}' not found in {config_path}")
+                return False, f"配置段 '{config_name}' 不存在"
+
+            # 记录配置文件内容（用于调试）
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_content = f.read()
+                self.logger.info(f"Config file content:\n{config_content}")
+            except Exception as e:
+                self.logger.warning(f"Could not read config file for logging: {e}")
+
+            # 对于Cloudflare R2，先验证配置，然后尝试简单的连接测试
+            if config_name.find('cloudflare') != -1 or 'r2' in config_name.lower():
+                # 第一步：验证配置是否存在
+                verify_cmd = [
+                    self.rclone_binary, 'config', 'show', config_name,
+                    '--config', config_path
+                ]
+
+                self.logger.info(f"Verifying config exists: {' '.join(verify_cmd)}")
+                verify_result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=10)
+
+                if verify_result.returncode != 0:
+                    self.logger.error(f"Config verification failed: {verify_result.stderr}")
+                    return False, "配置验证失败"
+
+                self.logger.info(f"Config verification successful, config content:\n{verify_result.stdout}")
+
+                # 第二步：尝试连接测试（允许失败）
+                cmd = [
+                    self.rclone_binary, 'lsd', f'{config_name}:',
+                    '--config', config_path,
+                    '--timeout', '15s',
+                    '--retries', '1'
+                ]
+            else:
+                # 其他存储类型使用标准测试
+                cmd = [
+                    self.rclone_binary, 'lsd', f'{config_name}:',
+                    '--config', config_path,
+                    '--timeout', '30s',
+                    '-vv'
+                ]
+
+            self.logger.info(f"Executing command: {' '.join(cmd)}")
             
-            cmd = [
-                self.rclone_binary, 'lsd', f'{config_name}:',
-                '--config', config_path,
-                '--timeout', '30s'
-            ]
-            
+            self.logger.info(f"Starting rclone process with timeout=35s")
             result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True, 
+                cmd,
+                capture_output=True,
+                text=True,
                 timeout=35
             )
-            
+
+            self.logger.info(f"rclone process completed with return code: {result.returncode}")
+            self.logger.info(f"rclone stdout: {result.stdout}")
+            self.logger.info(f"rclone stderr: {result.stderr}")
+
             if result.returncode == 0:
                 self.logger.info(f"Connection test successful for {config_name}")
                 return True, "连接成功"
             else:
                 error_msg = result.stderr.strip() or result.stdout.strip()
                 self.logger.error(f"Connection test failed for {config_name}: {error_msg}")
+
+                # 对于Cloudflare R2，如果是权限问题，仍然认为配置是有效的
+                if config_name.find('cloudflare') != -1 or 'r2' in config_name.lower():
+                    if 'AccessDenied' in error_msg or 'Access Denied' in error_msg:
+                        self.logger.info(f"Cloudflare R2 config is valid but has permission issues: {config_name}")
+                        return True, "配置有效（权限受限，请检查API Token权限）"
+                    elif 'doesn\'t support' in error_msg:
+                        self.logger.info(f"Cloudflare R2 config is valid but command not supported: {config_name}")
+                        return True, "配置有效（部分功能受限）"
+
                 return False, f"连接失败: {error_msg}"
-                
-        except subprocess.TimeoutExpired:
+
+        except subprocess.TimeoutExpired as e:
+            self.logger.error(f"rclone command timed out after 35 seconds for {config_name}")
             return False, "连接超时"
         except Exception as e:
             self.logger.error(f"Connection test error for {config_name}: {e}")
@@ -353,22 +457,25 @@ port = {config_data.get('port', 21)}
     def delete_config(self, config_name: str) -> bool:
         """删除rclone配置"""
         try:
-            config_path = self.get_config_path(config_name)
-            if os.path.exists(config_path):
-                os.remove(config_path)
-                self.logger.info(f"Deleted rclone config: {config_name}")
+            config_path = self.get_config_path()
+            if not os.path.exists(config_path):
+                return True  # 配置文件不存在，认为删除成功
+
+            # 读取现有配置
+            with open(config_path, 'r', encoding='utf-8') as f:
+                existing_config = f.read()
+
+            # 删除指定配置段
+            new_config = self._remove_config_section(existing_config, config_name)
+
+            # 写回配置文件
+            with open(config_path, 'w', encoding='utf-8') as f:
+                f.write(new_config)
+
+            self.logger.info(f"Deleted rclone config: {config_name}")
             return True
         except Exception as e:
             self.logger.error(f"Failed to delete config {config_name}: {e}")
             return False
     
-    def get_supported_types(self) -> List[Dict[str, str]]:
-        """获取支持的存储类型"""
-        return [
-            {'value': 's3', 'label': 'Amazon S3'},
-            {'value': 'google_drive', 'label': 'Google Drive'},
-            {'value': 'onedrive', 'label': 'Microsoft OneDrive'},
-            {'value': 'dropbox', 'label': 'Dropbox'},
-            {'value': 'ftp', 'label': 'FTP'},
-            {'value': 'sftp', 'label': 'SFTP'},
-        ]
+

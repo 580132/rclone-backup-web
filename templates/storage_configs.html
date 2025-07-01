@@ -43,17 +43,17 @@
                             <span class="d-flex align-items-center">
                                 <i class="bi bi-amazon me-1 text-warning"></i>Amazon S3
                             </span>
+                        {% elif config.storage_type == 'alibaba_oss' %}
+                            <span class="d-flex align-items-center">
+                                <i class="bi bi-cloud me-1 text-primary"></i>阿里云 OSS
+                            </span>
+                        {% elif config.storage_type == 'cloudflare_r2' %}
+                            <span class="d-flex align-items-center">
+                                <i class="bi bi-cloud me-1 text-warning"></i>Cloudflare R2
+                            </span>
                         {% elif config.storage_type == 'google_drive' %}
                             <span class="d-flex align-items-center">
                                 <i class="bi bi-google me-1 text-primary"></i>Google Drive
-                            </span>
-                        {% elif config.storage_type == 'onedrive' %}
-                            <span class="d-flex align-items-center">
-                                <i class="bi bi-microsoft me-1 text-info"></i>OneDrive
-                            </span>
-                        {% elif config.storage_type == 'dropbox' %}
-                            <span class="d-flex align-items-center">
-                                <i class="bi bi-dropbox me-1 text-primary"></i>Dropbox
                             </span>
                         {% elif config.storage_type == 'ftp' %}
                             <span class="d-flex align-items-center">
@@ -147,17 +147,21 @@
                     
                     <!-- S3配置字段 -->
                     <div id="s3_fields" class="config-fields" style="display: none;">
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Amazon S3配置</strong> - 支持AWS S3及兼容S3的存储服务
+                        </div>
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="mb-3">
-                                    <label for="access_key" class="form-label">Access Key *</label>
-                                    <input type="text" class="form-control" id="access_key" name="access_key">
+                                    <label for="access_key" class="form-label">Access Key ID *</label>
+                                    <input type="text" class="form-control" id="access_key" name="access_key" data-required="true">
                                 </div>
                             </div>
                             <div class="col-md-6">
                                 <div class="mb-3">
-                                    <label for="secret_key" class="form-label">Secret Key *</label>
-                                    <input type="password" class="form-control" id="secret_key" name="secret_key">
+                                    <label for="secret_key" class="form-label">Secret Access Key *</label>
+                                    <input type="password" class="form-control" id="secret_key" name="secret_key" data-required="true">
                                 </div>
                             </div>
                         </div>
@@ -165,7 +169,15 @@
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label for="region" class="form-label">区域</label>
-                                    <input type="text" class="form-control" id="region" name="region" value="us-east-1">
+                                    <select class="form-select" id="region" name="region">
+                                        <option value="us-east-1">US East (N. Virginia)</option>
+                                        <option value="us-west-1">US West (N. California)</option>
+                                        <option value="us-west-2">US West (Oregon)</option>
+                                        <option value="eu-west-1">Europe (Ireland)</option>
+                                        <option value="eu-central-1">Europe (Frankfurt)</option>
+                                        <option value="ap-southeast-1">Asia Pacific (Singapore)</option>
+                                        <option value="ap-northeast-1">Asia Pacific (Tokyo)</option>
+                                    </select>
                                 </div>
                             </div>
                             <div class="col-md-6">
@@ -173,8 +185,14 @@
                                     <label for="endpoint" class="form-label">自定义端点</label>
                                     <input type="text" class="form-control" id="endpoint" name="endpoint"
                                            placeholder="可选，用于S3兼容存储">
+                                    <div class="form-text">留空使用AWS S3默认端点</div>
                                 </div>
                             </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="bucket" class="form-label">默认存储桶</label>
+                            <input type="text" class="form-control" id="bucket" name="bucket"
+                                   placeholder="可选，指定默认存储桶">
                         </div>
                     </div>
                     
@@ -184,7 +202,7 @@
                             <div class="col-md-8">
                                 <div class="mb-3">
                                     <label for="host" class="form-label">主机地址 *</label>
-                                    <input type="text" class="form-control" id="host" name="host"
+                                    <input type="text" class="form-control" id="host" name="host" data-required="true"
                                            placeholder="例如：ftp.example.com">
                                 </div>
                             </div>
@@ -199,29 +217,272 @@
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label for="username" class="form-label">用户名 *</label>
-                                    <input type="text" class="form-control" id="username" name="username">
+                                    <input type="text" class="form-control" id="username" name="username" data-required="true">
                                 </div>
                             </div>
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label for="password" class="form-label">密码 *</label>
-                                    <input type="password" class="form-control" id="password" name="password">
+                                    <input type="password" class="form-control" id="password" name="password" data-required="true">
                                 </div>
                             </div>
                         </div>
                     </div>
-                    
-                    <!-- 其他存储类型的配置字段可以在这里添加 -->
-                    <div id="other_fields" class="config-fields" style="display: none;">
-                        <div class="alert alert-info">
-                            <i class="bi bi-info-circle"></i>
-                            此存储类型的配置功能正在开发中，敬请期待。
+
+                    <!-- 阿里云OSS配置字段 -->
+                    <div id="alibaba_oss_fields" class="config-fields" style="display: none;">
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>阿里云OSS配置</strong> - 使用S3兼容协议访问阿里云对象存储
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="oss_access_key" class="form-label">Access Key ID *</label>
+                                    <input type="text" class="form-control" id="oss_access_key" name="oss_access_key" data-required="true">
+                                    <div class="form-text">阿里云AccessKey ID</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="oss_secret_key" class="form-label">Secret Access Key *</label>
+                                    <input type="password" class="form-control" id="oss_secret_key" name="oss_secret_key" data-required="true">
+                                    <div class="form-text">阿里云AccessKey Secret</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="oss_endpoint" class="form-label">Endpoint *</label>
+                                    <input type="text" class="form-control" id="oss_endpoint" name="oss_endpoint" data-required="true"
+                                           placeholder="例如：oss-cn-hangzhou.aliyuncs.com">
+                                    <div class="form-text">OSS区域端点地址，不包含https://</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="oss_region" class="form-label">区域</label>
+                                    <select class="form-select" id="oss_region" name="region">
+                                        <option value="oss-cn-hangzhou">华东1（杭州）</option>
+                                        <option value="oss-cn-shanghai">华东2（上海）</option>
+                                        <option value="oss-cn-beijing">华北2（北京）</option>
+                                        <option value="oss-cn-shenzhen">华南1（深圳）</option>
+                                        <option value="oss-cn-guangzhou">华南2（广州）</option>
+                                        <option value="oss-cn-chengdu">西南1（成都）</option>
+                                        <option value="oss-cn-qingdao">华北1（青岛）</option>
+                                        <option value="oss-cn-zhangjiakou">华北3（张家口）</option>
+                                        <option value="oss-cn-huhehaote">华北5（呼和浩特）</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cloudflare R2配置字段 -->
+                    <div id="cloudflare_r2_fields" class="config-fields" style="display: none;">
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Cloudflare R2配置</strong> - 使用S3兼容协议访问Cloudflare R2存储
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="r2_access_key" class="form-label">Access Key ID *</label>
+                                    <input type="text" class="form-control" id="r2_access_key" name="r2_access_key" data-required="true">
+                                    <div class="form-text">R2 API Token的Access Key ID</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="r2_secret_key" class="form-label">Secret Access Key *</label>
+                                    <input type="password" class="form-control" id="r2_secret_key" name="r2_secret_key" data-required="true">
+                                    <div class="form-text">R2 API Token的Secret Access Key</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="r2_endpoint" class="form-label">Endpoint *</label>
+                            <input type="text" class="form-control" id="r2_endpoint" name="r2_endpoint" data-required="true"
+                                   placeholder="例如：your-account-id.r2.cloudflarestorage.com">
+                            <div class="form-text">R2端点地址，不包含https://前缀</div>
+                        </div>
+                        <div class="alert alert-warning mt-3">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>注意：</strong>Cloudflare R2的区域设置为auto，端点格式为：account-id.r2.cloudflarestorage.com
+                        </div>
+                    </div>
+
+                    <!-- Google Drive配置字段 -->
+                    <div id="google_drive_fields" class="config-fields" style="display: none;">
+                        <div class="alert alert-warning mb-3">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Google Drive配置</strong> - 需要OAuth2授权或服务账户凭据
+                        </div>
+
+                        <!-- 授权方式选择 -->
+                        <div class="mb-3">
+                            <label class="form-label">授权方式</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="drive_auth_type" id="drive_oauth" value="oauth" checked>
+                                <label class="form-check-label" for="drive_oauth">
+                                    OAuth2授权（推荐）
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="drive_auth_type" id="drive_service_account" value="service_account">
+                                <label class="form-check-label" for="drive_service_account">
+                                    服务账户
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- OAuth2配置 -->
+                        <div id="drive_oauth_config">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="drive_client_id" class="form-label">Client ID</label>
+                                        <input type="text" class="form-control" id="drive_client_id" name="client_id"
+                                               placeholder="留空使用默认值">
+                                        <div class="form-text">Google OAuth2 Client ID，留空使用rclone默认值</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="drive_client_secret" class="form-label">Client Secret</label>
+                                        <input type="password" class="form-control" id="drive_client_secret" name="client_secret"
+                                               placeholder="留空使用默认值">
+                                        <div class="form-text">Google OAuth2 Client Secret，留空使用rclone默认值</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="drive_scope" class="form-label">访问范围</label>
+                                <select class="form-select" id="drive_scope" name="scope">
+                                    <option value="drive">完全访问（推荐）</option>
+                                    <option value="drive.readonly">只读访问</option>
+                                    <option value="drive.file">仅访问rclone创建的文件</option>
+                                    <option value="drive.appfolder">应用数据文件夹</option>
+                                    <option value="drive.metadata.readonly">仅元数据只读</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- 服务账户配置 -->
+                        <div id="drive_service_account_config" style="display: none;">
+                            <div class="mb-3">
+                                <label for="drive_service_account_file" class="form-label">服务账户凭据文件</label>
+                                <textarea class="form-control" id="drive_service_account_file" name="service_account_credentials" rows="8"
+                                          placeholder="粘贴服务账户JSON凭据内容"></textarea>
+                                <div class="form-text">从Google Cloud Console下载的服务账户JSON文件内容</div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="drive_root_folder" class="form-label">根文件夹ID</label>
+                            <input type="text" class="form-control" id="drive_root_folder" name="root_folder_id"
+                                   placeholder="可选，限制访问特定文件夹">
+                            <div class="form-text">留空访问整个Drive，或指定文件夹ID限制访问范围</div>
+                        </div>
+
+                        <div class="alert alert-info mt-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>提示：</strong>首次配置OAuth2时需要在浏览器中完成授权流程
+                        </div>
+                    </div>
+
+                    <!-- SFTP配置字段 -->
+                    <div id="sftp_fields" class="config-fields" style="display: none;">
+                        <div class="alert alert-info mb-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>SFTP配置</strong> - SSH文件传输协议，支持密码和密钥认证
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                    <label for="sftp_host" class="form-label">主机地址 *</label>
+                                    <input type="text" class="form-control" id="sftp_host" name="host" data-required="true"
+                                           placeholder="例如：sftp.example.com">
+                                    <div class="form-text">SFTP服务器地址</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="sftp_port" class="form-label">端口</label>
+                                    <input type="number" class="form-control" id="sftp_port" name="port" value="22" min="1" max="65535">
+                                    <div class="form-text">SSH端口，默认22</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="sftp_username" class="form-label">用户名 *</label>
+                                    <input type="text" class="form-control" id="sftp_username" name="username" data-required="true">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="sftp_password" class="form-label">密码</label>
+                                    <input type="password" class="form-control" id="sftp_password" name="password"
+                                           placeholder="SSH登录密码">
+                                    <div class="form-text">留空使用密钥认证或ssh-agent</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 密钥认证 -->
+                        <div class="mb-3">
+                            <label class="form-label">密钥认证（可选）</label>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <label for="sftp_key_file" class="form-label">私钥文件路径</label>
+                                    <input type="text" class="form-control" id="sftp_key_file" name="key_file"
+                                           placeholder="例如：~/.ssh/id_rsa">
+                                    <div class="form-text">PEM格式的私钥文件路径</div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="sftp_key_pass" class="form-label">私钥密码</label>
+                                    <input type="password" class="form-control" id="sftp_key_pass" name="key_pass"
+                                           placeholder="私钥文件密码">
+                                    <div class="form-text">如果私钥有密码保护</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 高级选项 -->
+                        <div class="mb-3">
+                            <label class="form-label">高级选项</label>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="use_insecure_cipher" name="use_insecure_cipher">
+                                        <label class="form-check-label" for="use_insecure_cipher">
+                                            使用不安全的加密算法
+                                        </label>
+                                        <div class="form-text small">启用aes128-cbc等旧加密算法</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="disable_hashcheck" name="disable_hashcheck">
+                                        <label class="form-check-label" for="disable_hashcheck">
+                                            禁用哈希检查
+                                        </label>
+                                        <div class="form-text small">禁用远程文件哈希计算</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                    <button type="submit" class="btn btn-primary">
+                    <button type="submit" class="btn btn-primary" onclick="return validateForm()">
                         <i class="bi bi-check-circle"></i> 创建配置
                     </button>
                 </div>
@@ -256,19 +517,161 @@
 function showConfigFields() {
     const storageType = document.getElementById('storage_type').value;
     const allFields = document.querySelectorAll('.config-fields');
-    
-    // 隐藏所有配置字段
-    allFields.forEach(field => field.style.display = 'none');
-    
-    // 显示对应的配置字段
+
+    // 隐藏所有配置字段并移除required属性
+    allFields.forEach(field => {
+        field.style.display = 'none';
+        // 移除所有隐藏字段的required属性
+        const requiredInputs = field.querySelectorAll('input[required], select[required]');
+        requiredInputs.forEach(input => {
+            input.removeAttribute('required');
+        });
+    });
+
+    // 显示对应的配置字段并添加required属性
+    let targetFieldId = '';
     if (storageType === 's3') {
-        document.getElementById('s3_fields').style.display = 'block';
-    } else if (storageType === 'ftp' || storageType === 'sftp') {
-        document.getElementById('ftp_fields').style.display = 'block';
-    } else if (storageType) {
-        document.getElementById('other_fields').style.display = 'block';
+        targetFieldId = 's3_fields';
+    } else if (storageType === 'alibaba_oss') {
+        targetFieldId = 'alibaba_oss_fields';
+    } else if (storageType === 'cloudflare_r2') {
+        targetFieldId = 'cloudflare_r2_fields';
+    } else if (storageType === 'google_drive') {
+        targetFieldId = 'google_drive_fields';
+    } else if (storageType === 'sftp') {
+        targetFieldId = 'sftp_fields';
+    } else if (storageType === 'ftp') {
+        targetFieldId = 'ftp_fields';
+    }
+
+    if (targetFieldId) {
+        const targetField = document.getElementById(targetFieldId);
+        targetField.style.display = 'block';
+
+        // 为显示的字段添加required属性
+        const requiredInputs = targetField.querySelectorAll('input[data-required="true"], select[data-required="true"]');
+        requiredInputs.forEach(input => {
+            input.setAttribute('required', 'required');
+        });
     }
 }
+
+// 表单验证函数
+function validateForm() {
+    const storageType = document.getElementById('storage_type').value;
+    const name = document.getElementById('config_name').value.trim();
+
+    // 检查基本字段
+    if (!name) {
+        alert('请填写配置名称');
+        return false;
+    }
+
+    if (!storageType) {
+        alert('请选择存储类型');
+        return false;
+    }
+
+    // 根据存储类型验证必填字段
+    if (storageType === 'cloudflare_r2') {
+        const accessKey = document.getElementById('r2_access_key').value.trim();
+        const secretKey = document.getElementById('r2_secret_key').value.trim();
+        const endpoint = document.getElementById('r2_endpoint').value.trim();
+
+        if (!accessKey) {
+            alert('请填写 Cloudflare R2 的 Access Key ID');
+            document.getElementById('r2_access_key').focus();
+            return false;
+        }
+
+        if (!secretKey) {
+            alert('请填写 Cloudflare R2 的 Secret Access Key');
+            document.getElementById('r2_secret_key').focus();
+            return false;
+        }
+
+        if (!endpoint) {
+            alert('请填写 Cloudflare R2 的 Endpoint');
+            document.getElementById('r2_endpoint').focus();
+            return false;
+        }
+
+        console.log('Cloudflare R2 validation passed:', {
+            accessKey: accessKey,
+            secretKey: secretKey ? '***' : '',
+            endpoint: endpoint
+        });
+    } else if (storageType === 'alibaba_oss') {
+        const accessKey = document.getElementById('oss_access_key').value.trim();
+        const secretKey = document.getElementById('oss_secret_key').value.trim();
+        const endpoint = document.getElementById('oss_endpoint').value.trim();
+
+        if (!accessKey) {
+            alert('请填写阿里云OSS的Access Key ID');
+            document.getElementById('oss_access_key').focus();
+            return false;
+        }
+
+        if (!secretKey) {
+            alert('请填写阿里云OSS的Secret Access Key');
+            document.getElementById('oss_secret_key').focus();
+            return false;
+        }
+
+        if (!endpoint) {
+            alert('请填写阿里云OSS的Endpoint');
+            document.getElementById('oss_endpoint').focus();
+            return false;
+        }
+    } else if (storageType === 's3') {
+        const accessKey = document.getElementById('access_key').value.trim();
+        const secretKey = document.getElementById('secret_key').value.trim();
+
+        if (!accessKey) {
+            alert('请填写S3的Access Key ID');
+            document.getElementById('access_key').focus();
+            return false;
+        }
+
+        if (!secretKey) {
+            alert('请填写S3的Secret Access Key');
+            document.getElementById('secret_key').focus();
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Google Drive授权方式切换
+function toggleDriveAuthType() {
+    const oauthRadio = document.getElementById('drive_oauth');
+    const serviceAccountRadio = document.getElementById('drive_service_account');
+    const oauthConfig = document.getElementById('drive_oauth_config');
+    const serviceAccountConfig = document.getElementById('drive_service_account_config');
+
+    if (oauthRadio && oauthRadio.checked) {
+        oauthConfig.style.display = 'block';
+        serviceAccountConfig.style.display = 'none';
+    } else if (serviceAccountRadio && serviceAccountRadio.checked) {
+        oauthConfig.style.display = 'none';
+        serviceAccountConfig.style.display = 'block';
+    }
+}
+
+// 页面加载完成后绑定事件
+document.addEventListener('DOMContentLoaded', function() {
+    // 绑定Google Drive授权方式切换事件
+    const driveOauthRadio = document.getElementById('drive_oauth');
+    const driveServiceAccountRadio = document.getElementById('drive_service_account');
+
+    if (driveOauthRadio) {
+        driveOauthRadio.addEventListener('change', toggleDriveAuthType);
+    }
+    if (driveServiceAccountRadio) {
+        driveServiceAccountRadio.addEventListener('change', toggleDriveAuthType);
+    }
+});
 
 function testConnection(configId) {
     const button = event.target;

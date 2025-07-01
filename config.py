@@ -12,8 +12,8 @@ class Config:
     # 会话配置
     PERMANENT_SESSION_LIFETIME = timedelta(hours=24)
     
-    # rclone配置 - 使用相对路径
-    RCLONE_CONFIG_DIR = 'data/rclone_configs'
+    # rclone配置 - 使用rclone标准配置目录
+    RCLONE_CONFIG_DIR = os.path.expanduser('~/.config/rclone')
     RCLONE_BINARY = os.environ.get('RCLONE_BINARY') or 'rclone'
 
     # 备份配置 - 使用相对路径
@@ -21,7 +21,7 @@ class Config:
     MAX_BACKUP_SIZE = 10 * 1024 * 1024 * 1024  # 10GB
 
     # 日志配置 - 使用相对路径
-    LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
+    LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'DEBUG'  # 临时改为DEBUG
     LOG_FILE = 'logs/app.log'
     
     # 调度器配置
@@ -29,18 +29,19 @@ class Config:
     
     @staticmethod
     def init_app(app):
-        # 创建必要的目录（使用相对路径）
+        # 创建必要的目录
         directories = [
             'data',
-            'data/rclone_configs',
             'data/temp',
-            'logs'
+            'logs',
+            Config.RCLONE_CONFIG_DIR  # rclone标准配置目录
         ]
 
         for directory in directories:
             os.makedirs(directory, exist_ok=True)
 
         print("✓ 目录结构创建完成")
+        print(f"✓ rclone配置目录: {Config.RCLONE_CONFIG_DIR}")
 
 class DevelopmentConfig(Config):
     DEBUG = True
