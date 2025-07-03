@@ -27,7 +27,16 @@ class RcloneService:
         try:
             config_path = self.get_config_path()
             self.logger.info(f"Creating rclone config '{name}' of type '{storage_type}' at {config_path}")
-            self.logger.info(f"Config data: {config_data}")
+            self.logger.info(f"Config data keys: {list(config_data.keys())}")
+
+            # 记录敏感信息的掩码版本
+            masked_config = {}
+            for key, value in config_data.items():
+                if any(sensitive in key.lower() for sensitive in ['password', 'secret', 'key', 'token']):
+                    masked_config[key] = f"***{value[-4:] if len(str(value)) > 4 else '***'}"
+                else:
+                    masked_config[key] = value
+            self.logger.info(f"Config data (masked): {masked_config}")
 
             # 根据存储类型生成配置内容
             config_content = self._generate_config_content(name, storage_type, config_data)
@@ -35,7 +44,14 @@ class RcloneService:
                 self.logger.error(f"Failed to generate config content for {name}")
                 return False
 
-            self.logger.info(f"Generated config content:\n{config_content}")
+            self.logger.info(f"Generated config content (length: {len(config_content)} chars)")
+            # 记录配置内容的掩码版本
+            masked_content = config_content
+            for key, value in config_data.items():
+                if any(sensitive in key.lower() for sensitive in ['password', 'secret', 'key', 'token']):
+                    if str(value) in masked_content:
+                        masked_content = masked_content.replace(str(value), f"***{str(value)[-4:] if len(str(value)) > 4 else '***'}")
+            self.logger.info(f"Generated config content (masked):\n{masked_content}")
 
             # 读取现有配置文件
             existing_config = ""
@@ -44,10 +60,13 @@ class RcloneService:
                     existing_config = f.read()
                 self.logger.info(f"Existing config file size: {len(existing_config)} chars")
             else:
-                self.logger.info("No existing config file found")
+                self.logger.info("No existing config file found, creating new one")
 
             # 删除同名配置（如果存在）
+            original_size = len(existing_config)
             existing_config = self._remove_config_section(existing_config, name)
+            if len(existing_config) != original_size:
+                self.logger.info(f"Removed existing config section '{name}', size changed from {original_size} to {len(existing_config)} chars")
 
             # 追加新配置
             new_config = existing_config + "\n" + config_content if existing_config else config_content
@@ -57,10 +76,20 @@ class RcloneService:
                 f.write(new_config)
 
             self.logger.info(f"Successfully created rclone config: {name}")
-            self.logger.info(f"Final config file content:\n{new_config}")
+            self.logger.info(f"Final config file size: {len(new_config)} chars")
+
+            # 验证配置文件是否正确写入
+            if os.path.exists(config_path):
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    verification_content = f.read()
+                if name in verification_content:
+                    self.logger.info(f"Config verification successful: section '{name}' found in config file")
+                else:
+                    self.logger.error(f"Config verification failed: section '{name}' not found in config file")
+
             return True
         except Exception as e:
-            self.logger.error(f"Failed to create rclone config {name}: {e}")
+            self.logger.error(f"Failed to create rclone config {name}: {e}", exc_info=True)
             return False
 
     def _remove_config_section(self, config_content: str, section_name: str) -> str:
@@ -299,9 +328,14 @@ port = {config_data.get('port', 21)}
                     '-vv'
                 ]
 
-            self.logger.info(f"Executing command: {' '.join(cmd)}")
-            
-            self.logger.info(f"Starting rclone process with timeout=35s")
+            self.logger.info(f"Executing rclone test command: {' '.join(cmd)}")
+
+            # 记录环境变量（如果有的话）
+            env_vars = {k: v for k, v in os.environ.items() if 'RCLONE' in k or 'AWS' in k or 'S3' in k}
+            if env_vars:
+                self.logger.info(f"Relevant environment variables: {env_vars}")
+
+            self.logger.info(f"Starting rclone test process with timeout=35s")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -309,9 +343,9 @@ port = {config_data.get('port', 21)}
                 timeout=35
             )
 
-            self.logger.info(f"rclone process completed with return code: {result.returncode}")
-            self.logger.info(f"rclone stdout: {result.stdout}")
-            self.logger.info(f"rclone stderr: {result.stderr}")
+            self.logger.info(f"rclone test process completed with return code: {result.returncode}")
+            self.logger.info(f"rclone test stdout:\n{result.stdout}")
+            self.logger.info(f"rclone test stderr:\n{result.stderr}")
 
             if result.returncode == 0:
                 self.logger.info(f"Connection test successful for {config_name}")
@@ -342,117 +376,241 @@ port = {config_data.get('port', 21)}
         """上传文件到远程存储"""
         try:
             config_path = self.get_config_path(config_name)
+            self.logger.info(f"Upload parameters - local_path: {local_path}, remote_path: {remote_path}, config_name: {config_name}")
+            self.logger.info(f"Using config file: {config_path}")
+
             if not os.path.exists(config_path):
+                self.logger.error(f"Config file does not exist: {config_path}")
                 return False, "配置文件不存在"
-            
+
             if not os.path.exists(local_path):
+                self.logger.error(f"Local file does not exist: {local_path}")
                 return False, "本地文件不存在"
-            
+
+            # 记录文件大小
+            file_size = os.path.getsize(local_path)
+            self.logger.info(f"Local file size: {file_size} bytes ({file_size / 1024 / 1024:.2f} MB)")
+
+            # 记录配置文件内容（用于调试）
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config_content = f.read()
+                self.logger.info(f"Current rclone config file content:\n{config_content}")
+            except Exception as e:
+                self.logger.warning(f"Could not read config file for logging: {e}")
+
             cmd = [
                 self.rclone_binary, 'copy',
                 local_path,
                 f'{config_name}:{remote_path}',
                 '--config', config_path,
+                '--s3-no-check-bucket',  # 避免检查或创建bucket
                 '--progress',
-                '--stats', '1s'
+                '--stats', '1s',
+                '-vv'  # 增加详细输出
             ]
-            
+
             self.logger.info(f"Starting upload: {local_path} -> {config_name}:{remote_path}")
-            
+            self.logger.info(f"Executing rclone command: {' '.join(cmd)}")
+
+            # 记录环境变量（如果有的话）
+            env_vars = {k: v for k, v in os.environ.items() if 'RCLONE' in k or 'AWS' in k or 'S3' in k}
+            if env_vars:
+                self.logger.info(f"Relevant environment variables: {env_vars}")
+            else:
+                self.logger.info("No relevant environment variables found")
+
+            self.logger.info(f"Starting rclone subprocess with timeout=3600s")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=3600  # 1小时超时
             )
-            
+
+            self.logger.info(f"rclone process completed with return code: {result.returncode}")
+            self.logger.info(f"rclone stdout:\n{result.stdout}")
+            self.logger.info(f"rclone stderr:\n{result.stderr}")
+
             if result.returncode == 0:
                 self.logger.info(f"Upload successful: {local_path}")
                 return True, "上传成功"
             else:
                 error_msg = result.stderr.strip() or result.stdout.strip()
-                self.logger.error(f"Upload failed: {error_msg}")
+                self.logger.error(f"Upload failed with return code {result.returncode}")
+                self.logger.error(f"Error message: {error_msg}")
                 return False, f"上传失败: {error_msg}"
-                
+
         except subprocess.TimeoutExpired:
+            self.logger.error("Upload process timed out after 3600 seconds")
             return False, "上传超时"
         except Exception as e:
-            self.logger.error(f"Upload error: {e}")
+            self.logger.error(f"Upload error: {e}", exc_info=True)
             return False, f"上传失败: {str(e)}"
     
     def download_file(self, remote_path: str, local_path: str, config_name: str) -> Tuple[bool, str]:
         """从远程存储下载文件"""
         try:
             config_path = self.get_config_path(config_name)
+            self.logger.info(f"Download parameters - remote_path: {remote_path}, local_path: {local_path}, config_name: {config_name}")
+            self.logger.info(f"Using config file: {config_path}")
+
             if not os.path.exists(config_path):
+                self.logger.error(f"Config file does not exist: {config_path}")
                 return False, "配置文件不存在"
-            
+
             # 确保本地目录存在
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            
+            local_dir = os.path.dirname(local_path)
+            os.makedirs(local_dir, exist_ok=True)
+            self.logger.info(f"Created local directory: {local_dir}")
+
             cmd = [
                 self.rclone_binary, 'copy',
                 f'{config_name}:{remote_path}',
                 local_path,
                 '--config', config_path,
-                '--progress'
+                '--progress',
+                '-vv'  # 增加详细输出
             ]
-            
+
+            self.logger.info(f"Starting download: {config_name}:{remote_path} -> {local_path}")
+            self.logger.info(f"Executing rclone command: {' '.join(cmd)}")
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=3600
             )
-            
+
+            self.logger.info(f"rclone download process completed with return code: {result.returncode}")
+            self.logger.info(f"rclone download stdout:\n{result.stdout}")
+            self.logger.info(f"rclone download stderr:\n{result.stderr}")
+
             if result.returncode == 0:
-                self.logger.info(f"Download successful: {remote_path}")
+                # 验证文件是否下载成功
+                if os.path.exists(local_path):
+                    file_size = os.path.getsize(local_path)
+                    self.logger.info(f"Download successful: {remote_path}, file size: {file_size} bytes")
+                else:
+                    self.logger.warning(f"Download completed but file not found at: {local_path}")
                 return True, "下载成功"
             else:
                 error_msg = result.stderr.strip() or result.stdout.strip()
-                self.logger.error(f"Download failed: {error_msg}")
+                self.logger.error(f"Download failed with return code {result.returncode}")
+                self.logger.error(f"Error message: {error_msg}")
                 return False, f"下载失败: {error_msg}"
-                
+
         except subprocess.TimeoutExpired:
+            self.logger.error("Download process timed out after 3600 seconds")
             return False, "下载超时"
         except Exception as e:
-            self.logger.error(f"Download error: {e}")
+            self.logger.error(f"Download error: {e}", exc_info=True)
             return False, f"下载失败: {str(e)}"
     
     def list_files(self, remote_path: str, config_name: str) -> Tuple[bool, List[Dict], str]:
         """列出远程文件"""
         try:
             config_path = self.get_config_path(config_name)
+            self.logger.info(f"List files parameters - remote_path: {remote_path}, config_name: {config_name}")
+            self.logger.info(f"Using config file: {config_path}")
+
             if not os.path.exists(config_path):
+                self.logger.error(f"Config file does not exist: {config_path}")
                 return False, [], "配置文件不存在"
-            
+
             cmd = [
                 self.rclone_binary, 'lsjson',
                 f'{config_name}:{remote_path}',
-                '--config', config_path
+                '--config', config_path,
+                '-vv'  # 增加详细输出
             ]
-            
+
+            self.logger.info(f"Executing rclone list command: {' '.join(cmd)}")
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=60
             )
-            
+
+            self.logger.info(f"rclone list process completed with return code: {result.returncode}")
+            self.logger.info(f"rclone list stdout:\n{result.stdout}")
+            self.logger.info(f"rclone list stderr:\n{result.stderr}")
+
             if result.returncode == 0:
-                files = json.loads(result.stdout) if result.stdout.strip() else []
-                return True, files, "获取成功"
+                try:
+                    files = json.loads(result.stdout) if result.stdout.strip() else []
+                    self.logger.info(f"Successfully parsed {len(files)} files from remote path: {remote_path}")
+                    return True, files, "获取成功"
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"Failed to parse JSON output: {e}")
+                    self.logger.error(f"Raw stdout: {result.stdout}")
+                    return False, [], "解析文件列表失败"
             else:
                 error_msg = result.stderr.strip() or result.stdout.strip()
+                self.logger.error(f"List files failed with return code {result.returncode}")
+                self.logger.error(f"Error message: {error_msg}")
                 return False, [], f"获取失败: {error_msg}"
-                
-        except json.JSONDecodeError:
-            return False, [], "解析文件列表失败"
+
         except subprocess.TimeoutExpired:
+            self.logger.error("List files process timed out after 60 seconds")
             return False, [], "获取文件列表超时"
         except Exception as e:
-            self.logger.error(f"List files error: {e}")
+            self.logger.error(f"List files error: {e}", exc_info=True)
             return False, [], f"获取失败: {str(e)}"
+
+    def delete_file(self, remote_path: str, config_name: str) -> Tuple[bool, str]:
+        """删除远程文件"""
+        try:
+            config_path = self.get_config_path(config_name)
+            self.logger.info(f"Delete file parameters - remote_path: {remote_path}, config_name: {config_name}")
+            self.logger.info(f"Using config file: {config_path}")
+
+            if not os.path.exists(config_path):
+                self.logger.error(f"Config file does not exist: {config_path}")
+                return False, "配置文件不存在"
+
+            cmd = [
+                self.rclone_binary, 'deletefile',
+                f'{config_name}:{remote_path}',
+                '--config', config_path,
+                '-vv'  # 增加详细输出
+            ]
+
+            self.logger.info(f"Executing rclone delete command: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5分钟超时
+            )
+
+            self.logger.info(f"rclone delete process completed with return code: {result.returncode}")
+            self.logger.info(f"rclone delete stdout:\n{result.stdout}")
+            self.logger.info(f"rclone delete stderr:\n{result.stderr}")
+
+            if result.returncode == 0:
+                self.logger.info(f"Delete successful: {remote_path}")
+                return True, "删除成功"
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip()
+                # 如果文件不存在，也认为是成功的
+                if "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
+                    self.logger.info(f"File not found (already deleted): {remote_path}")
+                    return True, "文件不存在（已删除）"
+                self.logger.error(f"Delete failed with return code {result.returncode}")
+                self.logger.error(f"Error message: {error_msg}")
+                return False, f"删除失败: {error_msg}"
+
+        except subprocess.TimeoutExpired:
+            self.logger.error("Delete process timed out after 300 seconds")
+            return False, "删除操作超时"
+        except Exception as e:
+            self.logger.error(f"Delete file error: {e}", exc_info=True)
+            return False, f"删除文件失败: {str(e)}"
     
     def delete_config(self, config_name: str) -> bool:
         """删除rclone配置"""

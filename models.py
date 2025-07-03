@@ -92,7 +92,7 @@ class BackupTask(db.Model):
     encryption_password = db.Column(db.String(255))  # 加密密码（已加密存储）
     
     # 保留策略
-    retention_days = db.Column(db.Integer, default=30)
+    retention_count = db.Column(db.Integer, default=10)  # 保留备份份数
     
     # 状态信息
     is_active = db.Column(db.Boolean, default=True)

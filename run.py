@@ -29,18 +29,46 @@ def check_rclone():
         print(f"✗ 检查rclone时出错: {e}")
         return False
 
+def init_scheduler(app):
+    """初始化调度器"""
+    try:
+        print("✓ 初始化调度器...")
+
+        # 只在主进程中运行，避免开发模式重载问题
+        if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
+            from services.scheduler_service import scheduler_service
+            scheduler_service.init_app(app)
+
+            # 在应用上下文中启动调度器
+            with app.app_context():
+                scheduler_service.start()
+
+            print("✓ 调度器初始化并启动成功")
+            app.logger.info("Scheduler initialized and started")
+        else:
+            print("⚠ 跳过调度器初始化（Flask重载进程）")
+            app.logger.info("Skipping scheduler initialization in Flask reloader process")
+
+    except Exception as e:
+        print(f"✗ 调度器初始化失败: {e}")
+        app.logger.error(f"Failed to initialize scheduler: {e}")
+        import traceback
+        app.logger.error(traceback.format_exc())
+        # 调度器失败不应该阻止应用启动
+        print("⚠ 调度器初始化失败，但应用将继续启动")
+
 def main():
     """主函数"""
     print("=" * 50)
     print("RClone备份Web系统")
     print("=" * 50)
-    
+
     # 检查Python版本
     if sys.version_info < (3, 7):
         print("✗ 需要Python 3.7或更高版本")
         sys.exit(1)
     print(f"✓ Python版本: {sys.version}")
-    
+
     # 获取配置
     config_name = os.environ.get('FLASK_ENV', 'development')
     print(f"✓ 运行模式: {config_name}")
@@ -68,22 +96,33 @@ def main():
         print(f"✗ 数据库初始化失败: {e}")
         print("请检查data目录权限或手动创建data目录")
         sys.exit(1)
-    
+
+    # 初始化调度器
+    init_scheduler(app)
+
     # 启动信息
     host = os.environ.get('HOST', '0.0.0.0')
     port = int(os.environ.get('PORT', 5000))
     debug = config_name == 'development'
-    
+
     print(f"✓ 服务器启动中...")
     print(f"  地址: http://{host}:{port}")
     print(f"  默认用户: admin")
     print(f"  默认密码: admin123")
     print("=" * 50)
-    
+
     try:
         app.run(host=host, port=port, debug=debug)
     except KeyboardInterrupt:
         print("\n服务器已停止")
+        # 停止调度器
+        try:
+            from services.scheduler_service import scheduler_service
+            if scheduler_service.scheduler and scheduler_service.scheduler.running:
+                scheduler_service.stop()
+                print("✓ 调度器已停止")
+        except:
+            pass
     except Exception as e:
         print(f"启动失败: {e}")
         sys.exit(1)

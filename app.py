@@ -520,10 +520,315 @@ def create_app(config_name='default'):
         """备份任务页面"""
         tasks = BackupTask.query.all()
         storage_configs = StorageConfig.query.filter_by(is_active=True).all()
-        return render_template('backup_tasks.html', 
-                             tasks=tasks, 
+        return render_template('backup_tasks.html',
+                             tasks=tasks,
                              storage_configs=storage_configs)
-    
+
+    @app.route('/backup-tasks', methods=['POST'])
+    @login_required
+    def create_backup_task():
+        """创建备份任务"""
+        try:
+            from services.backup_service import BackupService
+            backup_service = BackupService()
+
+            # 获取表单数据
+            task_data = {
+                'name': request.form.get('name'),
+                'description': request.form.get('description', ''),
+                'source_path': request.form.get('source_path'),
+                'storage_config_id': int(request.form.get('storage_config_id')),
+                'remote_path': request.form.get('remote_path'),
+                'cron_expression': request.form.get('cron_expression', ''),
+                'compression_enabled': request.form.get('compression_enabled') == 'on',
+                'compression_type': request.form.get('compression_type', 'tar.gz'),
+                'encryption_enabled': request.form.get('encryption_enabled') == 'on',
+                'encryption_password': request.form.get('encryption_password', ''),
+                'retention_count': int(request.form.get('retention_count', 10)),
+                'is_active': request.form.get('is_active') == 'on'
+            }
+
+            # 验证必填字段
+            if not all([task_data['name'], task_data['source_path'], task_data['remote_path']]):
+                flash('请填写所有必填字段', 'error')
+                return redirect(url_for('backup_tasks'))
+
+            # 创建备份任务
+            success, message, task = backup_service.create_backup_task(task_data)
+
+            if success:
+                # 添加任务到调度器
+                try:
+                    from services.scheduler_service import scheduler_service
+                    if scheduler_service.scheduler and scheduler_service.scheduler.running:
+                        # 添加任务到调度器
+                        scheduler_service.add_backup_task(task)
+                        app.logger.info(f"Added task {task.name} to scheduler")
+                    else:
+                        app.logger.warning("Scheduler not running, task not added to scheduler")
+                except Exception as e:
+                    app.logger.error(f"Failed to add task {task.name} to scheduler: {e}")
+                    # 调度器添加失败不应该影响任务创建的成功状态
+
+                flash(f'备份任务 "{task.name}" 创建成功', 'success')
+            else:
+                flash(message, 'error')
+
+        except Exception as e:
+            app.logger.error(f"Failed to create backup task: {e}")
+            flash('创建备份任务时出错', 'error')
+
+        return redirect(url_for('backup_tasks'))
+
+    @app.route('/backup-tasks/<int:task_id>/edit')
+    @login_required
+    def edit_backup_task(task_id):
+        """编辑备份任务页面"""
+        try:
+            task = BackupTask.query.get(task_id)
+            if not task:
+                flash('任务不存在', 'error')
+                return redirect(url_for('backup_tasks'))
+
+            storage_configs = StorageConfig.query.filter_by(is_active=True).all()
+            return render_template('edit_backup_task.html',
+                                 task=task,
+                                 storage_configs=storage_configs)
+        except Exception as e:
+            app.logger.error(f"Failed to load edit task page: {e}")
+            flash('加载编辑页面时出错', 'error')
+            return redirect(url_for('backup_tasks'))
+
+    @app.route('/backup-tasks/<int:task_id>/edit', methods=['POST'])
+    @login_required
+    def update_backup_task(task_id):
+        """更新备份任务"""
+        try:
+            from services.backup_service import BackupService
+            backup_service = BackupService()
+
+            # 获取表单数据
+            task_data = {
+                'name': request.form.get('name'),
+                'description': request.form.get('description', ''),
+                'source_path': request.form.get('source_path'),
+                'storage_config_id': int(request.form.get('storage_config_id')),
+                'remote_path': request.form.get('remote_path'),
+                'cron_expression': request.form.get('cron_expression', ''),
+                'compression_enabled': request.form.get('compression_enabled') == 'on',
+                'compression_type': request.form.get('compression_type', 'tar.gz'),
+                'encryption_enabled': request.form.get('encryption_enabled') == 'on',
+                'encryption_password': request.form.get('encryption_password', ''),
+                'retention_count': int(request.form.get('retention_count', 10)),
+                'is_active': request.form.get('is_active') == 'on'
+            }
+
+            # 验证必填字段
+            if not all([task_data['name'], task_data['source_path'], task_data['remote_path']]):
+                flash('请填写所有必填字段', 'error')
+                return redirect(url_for('edit_backup_task', task_id=task_id))
+
+            # 更新备份任务
+            success, message, task = backup_service.update_backup_task(task_id, task_data)
+
+            if success:
+                # 更新调度器中的任务
+                try:
+                    from services.scheduler_service import scheduler_service
+                    if scheduler_service.scheduler and scheduler_service.scheduler.running:
+                        # 更新调度器中的任务
+                        scheduler_service.update_backup_task(task)
+                        app.logger.info(f"Updated scheduler for task {task.name}")
+                    else:
+                        app.logger.warning("Scheduler not running, task schedule not updated")
+                except Exception as e:
+                    app.logger.error(f"Failed to update scheduler for task {task.name}: {e}")
+                    # 调度器更新失败不应该影响任务更新的成功状态
+
+                flash(f'备份任务 "{task.name}" 更新成功', 'success')
+                return redirect(url_for('backup_tasks'))
+            else:
+                flash(message, 'error')
+                return redirect(url_for('edit_backup_task', task_id=task_id))
+
+        except Exception as e:
+            app.logger.error(f"Failed to update backup task: {e}")
+            flash('更新备份任务时出错', 'error')
+            return redirect(url_for('edit_backup_task', task_id=task_id))
+
+    @app.route('/backup-tasks/<int:task_id>/run', methods=['POST'])
+    @login_required
+    def run_backup_task(task_id):
+        """手动运行备份任务"""
+        try:
+            from services.backup_service import BackupService
+            backup_service = BackupService()
+
+            success, message = backup_service.run_backup_task(task_id, manual=True)
+
+            if success:
+                flash(f'备份任务已开始执行: {message}', 'success')
+            else:
+                flash(f'启动备份任务失败: {message}', 'error')
+
+        except Exception as e:
+            app.logger.error(f"Failed to run backup task: {e}")
+            flash('运行备份任务时出错', 'error')
+
+        return redirect(url_for('backup_tasks'))
+
+    @app.route('/backup-tasks/<int:task_id>/delete', methods=['POST'])
+    @login_required
+    def delete_backup_task(task_id):
+        """删除备份任务"""
+        try:
+            from services.backup_service import BackupService
+            backup_service = BackupService()
+
+            success, message = backup_service.delete_backup_task(task_id)
+
+            if success:
+                # 从调度器中移除任务
+                try:
+                    from services.scheduler_service import scheduler_service
+                    if scheduler_service.scheduler and scheduler_service.scheduler.running:
+                        scheduler_service.remove_backup_task(task_id)
+                        app.logger.info(f"Removed task {task_id} from scheduler")
+                    else:
+                        app.logger.warning("Scheduler not running, task not removed from scheduler")
+                except Exception as e:
+                    app.logger.error(f"Failed to remove task {task_id} from scheduler: {e}")
+                    # 调度器移除失败不应该影响任务删除的成功状态
+
+                flash(message, 'success')
+            else:
+                flash(message, 'error')
+
+        except Exception as e:
+            app.logger.error(f"Failed to delete backup task: {e}")
+            flash('删除备份任务时出错', 'error')
+
+        return redirect(url_for('backup_tasks'))
+
+    @app.route('/api/browse-directory')
+    @login_required
+    def browse_directory():
+        """浏览本地目录结构"""
+        import json
+        import stat
+        from pathlib import Path
+
+        try:
+            # 获取请求的路径，默认为根目录
+            path = request.args.get('path', '/')
+
+            # 安全检查：确保路径是绝对路径
+            if not os.path.isabs(path):
+                path = os.path.abspath(path)
+
+            # 检查路径是否存在
+            if not os.path.exists(path):
+                return jsonify({'error': '路径不存在'}), 404
+
+            # 检查是否有读取权限
+            if not os.access(path, os.R_OK):
+                return jsonify({'error': '没有读取权限'}), 403
+
+            directories = []
+            files = []
+
+            try:
+                # 获取目录内容
+                for item in os.listdir(path):
+                    item_path = os.path.join(path, item)
+
+                    try:
+                        # 获取文件状态
+                        stat_info = os.stat(item_path)
+                        is_dir = stat.S_ISDIR(stat_info.st_mode)
+
+                        item_info = {
+                            'name': item,
+                            'path': item_path,
+                            'is_directory': is_dir,
+                            'size': stat_info.st_size if not is_dir else 0,
+                            'modified': stat_info.st_mtime
+                        }
+
+                        if is_dir:
+                            # 检查是否有子目录
+                            try:
+                                has_children = any(
+                                    os.path.isdir(os.path.join(item_path, child))
+                                    for child in os.listdir(item_path)
+                                )
+                                item_info['has_children'] = has_children
+                            except (PermissionError, OSError):
+                                item_info['has_children'] = False
+
+                            directories.append(item_info)
+                        else:
+                            files.append(item_info)
+
+                    except (PermissionError, OSError):
+                        # 跳过无法访问的文件/目录
+                        continue
+
+            except (PermissionError, OSError) as e:
+                return jsonify({'error': f'无法读取目录: {str(e)}'}), 403
+
+            # 按名称排序
+            directories.sort(key=lambda x: x['name'].lower())
+            files.sort(key=lambda x: x['name'].lower())
+
+            # 获取父目录路径
+            parent_path = os.path.dirname(path) if path != '/' else None
+
+            return jsonify({
+                'current_path': path,
+                'parent_path': parent_path,
+                'directories': directories,
+                'files': files
+            })
+
+        except Exception as e:
+            app.logger.error(f"Browse directory error: {e}")
+            return jsonify({'error': '服务器内部错误'}), 500
+
+    @app.route('/api/backup-tasks/<int:task_id>/status')
+    @login_required
+    def get_backup_task_status(task_id):
+        """获取备份任务状态"""
+        try:
+            task = BackupTask.query.get(task_id)
+            if not task:
+                return jsonify({'error': '任务不存在'}), 404
+
+            latest_log = task.latest_log
+            status_info = {
+                'task_id': task.id,
+                'name': task.name,
+                'is_active': task.is_active,
+                'last_run_at': task.last_run_at.isoformat() if task.last_run_at else None,
+                'next_run_at': task.next_run_at.isoformat() if task.next_run_at else None,
+                'latest_log': None
+            }
+
+            if latest_log:
+                status_info['latest_log'] = {
+                    'id': latest_log.id,
+                    'status': latest_log.status,
+                    'start_time': latest_log.start_time.isoformat(),
+                    'end_time': latest_log.end_time.isoformat() if latest_log.end_time else None,
+                    'error_message': latest_log.error_message
+                }
+
+            return jsonify(status_info)
+
+        except Exception as e:
+            app.logger.error(f"Failed to get task status: {e}")
+            return jsonify({'error': '获取任务状态失败'}), 500
+
     # 错误处理
     @app.errorhandler(404)
     def not_found(error):
@@ -534,10 +839,67 @@ def create_app(config_name='default'):
     @app.errorhandler(500)
     def internal_error(error):
         db.session.rollback()
-        return render_template('error.html', 
-                             error_code=500, 
+        return render_template('error.html',
+                             error_code=500,
                              error_message='服务器内部错误'), 500
-    
+
+    @app.route('/scheduler-status')
+    @login_required
+    def scheduler_status():
+        """调度器状态检查页面"""
+        try:
+            from services.scheduler_service import scheduler_service, _app_instance
+            from datetime import datetime
+
+            status_info = {
+                'current_time': datetime.now(),
+                'scheduler_exists': scheduler_service.scheduler is not None,
+                'scheduler_running': False,
+                'app_instance_set': _app_instance is not None,
+                'jobs': [],
+                'active_tasks': [],
+                'error': None
+            }
+
+            if scheduler_service.scheduler:
+                status_info['scheduler_running'] = scheduler_service.scheduler.running
+
+                # 获取作业信息
+                jobs = scheduler_service.scheduler.get_jobs()
+                for job in jobs:
+                    status_info['jobs'].append({
+                        'id': job.id,
+                        'name': job.name,
+                        'next_run_time': job.next_run_time,
+                        'trigger': str(job.trigger),
+                        'func_name': job.func.__name__ if hasattr(job.func, '__name__') else str(job.func)
+                    })
+
+            # 获取活跃任务
+            active_tasks = BackupTask.query.filter_by(is_active=True).all()
+            for task in active_tasks:
+                status_info['active_tasks'].append({
+                    'id': task.id,
+                    'name': task.name,
+                    'cron_expression': task.cron_expression,
+                    'next_run_at': task.next_run_at,
+                    'has_scheduler_job': scheduler_service.scheduler and
+                                       scheduler_service.scheduler.get_job(f"backup_task_{task.id}") is not None
+                })
+
+            return jsonify(status_info)
+
+        except Exception as e:
+            return jsonify({
+                'error': str(e),
+                'current_time': datetime.now()
+            }), 500
+
+    @app.route('/scheduler')
+    @login_required
+    def scheduler_page():
+        """调度器状态页面"""
+        return render_template('scheduler_status.html')
     return app
 
 def check_database_structure():

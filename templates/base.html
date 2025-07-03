@@ -609,6 +609,12 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint == 'scheduler_page' %}active{% endif %}"
+                               href="{{ url_for('scheduler_page') }}">
+                                <i class="bi bi-cpu"></i> 调度器状态
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link" href="#" onclick="alert('功能开发中...')">
                                 <i class="bi bi-gear"></i> 系统设置
                             </a>

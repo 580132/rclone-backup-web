@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-简化的应用启动脚本
+生产模式启动脚本（无调试模式，确保调度器正常工作）
 """
 
 import os
 import sys
 
 def main():
-    print("RClone备份Web系统启动")
-    print("=" * 40)
+    print("RClone备份Web系统启动 (生产模式)")
+    print("=" * 50)
     
     # 确保必要目录存在
     directories = ['data', 'data/rclone_configs', 'data/temp', 'logs']
@@ -23,41 +23,48 @@ def main():
         # 导入并创建应用
         from app import create_app, init_database
         
-        app = create_app('development')
+        # 创建生产模式应用（无调试）
+        app = create_app('development')  # 使用development配置但不开启debug
         print("✓ Flask应用创建成功")
         
         # 初始化数据库
         init_database(app)
         print("✓ 数据库初始化成功")
         
-        # 强制初始化调度器（在启动前）
+        # 手动初始化调度器
         print("✓ 初始化调度器...")
         try:
-            # 设置环境变量，确保调度器在主进程中启动
-            os.environ['WERKZEUG_RUN_MAIN'] = 'true'
-
             from services.scheduler_service import scheduler_service
+            
             with app.app_context():
-                if scheduler_service.scheduler is None:
-                    scheduler_service.init_app(app)
-                if not scheduler_service.scheduler.running:
-                    scheduler_service.start()
-
-            print("✓ 调度器启动成功")
-            print(f"  - 作业数量: {len(scheduler_service.scheduler.get_jobs())}")
-
+                # 强制初始化调度器
+                scheduler_service.init_app(app)
+                scheduler_service.start()
+                
+                # 检查调度器状态
+                jobs = scheduler_service.scheduler.get_jobs()
+                print(f"✓ 调度器启动成功，包含 {len(jobs)} 个作业")
+                
+                # 显示作业信息
+                for job in jobs:
+                    print(f"  - {job.id}: 下次运行 {job.next_run_time}")
+                
         except Exception as e:
-            print(f"⚠ 调度器启动失败: {e}")
-            print("  应用将继续启动，但定时任务可能不工作")
-
-        # 启动应用
+            print(f"✗ 调度器启动失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return 1
+        
+        # 启动应用（非调试模式）
         print("✓ 启动Web服务器...")
         print("  访问地址: http://localhost:5000")
         print("  默认用户: admin")
         print("  默认密码: admin123")
-        print("=" * 40)
-
-        app.run(host='0.0.0.0', port=5000, debug=True)
+        print("  模式: 生产模式（调度器已启用）")
+        print("=" * 50)
+        
+        # 非调试模式启动，避免重载问题
+        app.run(host='0.0.0.0', port=5000, debug=False)
         
     except Exception as e:
         print(f"✗ 启动失败: {e}")
