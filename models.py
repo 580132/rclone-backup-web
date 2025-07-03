@@ -4,6 +4,16 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
 
+def get_local_time():
+    """获取本地时间（Asia/Shanghai时区）"""
+    try:
+        import pytz
+        local_tz = pytz.timezone('Asia/Shanghai')
+        local_time = datetime.now(local_tz)
+        return local_time.replace(tzinfo=None)
+    except Exception:
+        return datetime.now()
+
 class User(db.Model):
     """用户模型"""
     __tablename__ = 'users'
@@ -11,7 +21,7 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_local_time)
     
     def set_password(self, password):
         """设置密码"""
@@ -34,8 +44,8 @@ class StorageConfig(db.Model):
     rclone_config_name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)  # 配置描述
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_local_time)
+    updated_at = db.Column(db.DateTime, default=get_local_time, onupdate=get_local_time)
 
     # 关联的备份任务
     backup_tasks = db.relationship('BackupTask', backref='storage_config', lazy=True)
@@ -63,7 +73,7 @@ class StorageConfigHistory(db.Model):
     config_data = db.Column(db.Text, nullable=False)  # JSON格式的配置数据
     rclone_config_content = db.Column(db.Text)  # rclone配置文件内容
     change_reason = db.Column(db.String(255))  # 变更原因
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_local_time)
     created_by = db.Column(db.String(100))  # 创建者
 
     # 复合唯一索引：同一配置的版本号不能重复
@@ -98,8 +108,8 @@ class BackupTask(db.Model):
     is_active = db.Column(db.Boolean, default=True)
     last_run_at = db.Column(db.DateTime)
     next_run_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_local_time)
+    updated_at = db.Column(db.DateTime, default=get_local_time, onupdate=get_local_time)
     
     # 关联的备份日志
     backup_logs = db.relationship('BackupLog', backref='task', lazy=True, order_by='BackupLog.start_time.desc()')
@@ -114,11 +124,23 @@ class BackupTask(db.Model):
         """计算成功率"""
         if not self.backup_logs:
             return 0
-        
+
         total = len(self.backup_logs)
         success = len([log for log in self.backup_logs if log.status == 'success'])
         return round((success / total) * 100, 1)
-    
+
+    @property
+    def last_run_at_local(self):
+        """获取本地时区的最后运行时间"""
+        # 现在数据库中存储的就是本地时间，直接返回
+        return self.last_run_at
+
+    @property
+    def next_run_at_local(self):
+        """获取本地时区的下次运行时间"""
+        # 现在数据库中存储的就是本地时间，直接返回
+        return self.next_run_at
+
     def __repr__(self):
         return f'<BackupTask {self.name}>'
 
@@ -129,7 +151,7 @@ class BackupLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     task_id = db.Column(db.Integer, db.ForeignKey('backup_tasks.id'), nullable=False)
     status = db.Column(db.String(20), nullable=False)  # running, success, failed
-    start_time = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    start_time = db.Column(db.DateTime, nullable=False, default=get_local_time)
     end_time = db.Column(db.DateTime)
     
     # 文件信息
@@ -166,8 +188,8 @@ class SystemConfig(db.Model):
     key = db.Column(db.String(100), unique=True, nullable=False)
     value = db.Column(db.Text)
     description = db.Column(db.String(255))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_local_time)
+    updated_at = db.Column(db.DateTime, default=get_local_time, onupdate=get_local_time)
     
     def __repr__(self):
         return f'<SystemConfig {self.key}>'

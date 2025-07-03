@@ -202,10 +202,19 @@
             box-shadow: var(--shadow-light);
         }
 
-        .btn-gradient:hover {
+        .btn-gradient:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: var(--shadow-medium);
             color: white;
+        }
+
+        .btn-gradient:disabled {
+            background: linear-gradient(135deg, #6c757d 0%, #adb5bd 100%);
+            color: rgba(255, 255, 255, 0.6);
+            box-shadow: none;
+            cursor: not-allowed;
+            opacity: 0.65;
+            transform: none;
         }
 
         .btn-gradient-success {
@@ -214,9 +223,18 @@
             color: white;
         }
 
-        .btn-gradient-success:hover {
+        .btn-gradient-success:hover:not(:disabled) {
             box-shadow: var(--shadow-medium);
             color: white;
+        }
+
+        .btn-gradient-success:disabled {
+            background: linear-gradient(135deg, #6c757d 0%, #adb5bd 100%);
+            color: rgba(255, 255, 255, 0.6);
+            box-shadow: none;
+            cursor: not-allowed;
+            opacity: 0.65;
+            transform: none;
         }
 
         .btn-gradient-warning {
@@ -225,9 +243,18 @@
             color: white;
         }
 
-        .btn-gradient-warning:hover {
+        .btn-gradient-warning:hover:not(:disabled) {
             box-shadow: var(--shadow-medium);
             color: white;
+        }
+
+        .btn-gradient-warning:disabled {
+            background: linear-gradient(135deg, #6c757d 0%, #adb5bd 100%);
+            color: rgba(255, 255, 255, 0.6);
+            box-shadow: none;
+            cursor: not-allowed;
+            opacity: 0.65;
+            transform: none;
         }
 
         .btn-gradient-danger {
@@ -236,9 +263,18 @@
             color: white;
         }
 
-        .btn-gradient-danger:hover {
+        .btn-gradient-danger:hover:not(:disabled) {
             box-shadow: var(--shadow-medium);
             color: white;
+        }
+
+        .btn-gradient-danger:disabled {
+            background: linear-gradient(135deg, #6c757d 0%, #adb5bd 100%);
+            color: rgba(255, 255, 255, 0.6);
+            box-shadow: none;
+            cursor: not-allowed;
+            opacity: 0.65;
+            transform: none;
         }
 
         .btn-gradient-secondary {
@@ -252,11 +288,21 @@
             box-shadow: var(--shadow-light);
         }
 
-        .btn-gradient-secondary:hover {
+        .btn-gradient-secondary:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: var(--shadow-medium);
             color: var(--text-primary);
             border-color: rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-gradient-secondary:disabled {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            color: rgba(108, 117, 125, 0.6);
+            border-color: rgba(0, 0, 0, 0.1);
+            box-shadow: none;
+            cursor: not-allowed;
+            opacity: 0.65;
+            transform: none;
         }
 
         /* 统计卡片样式 */
@@ -604,7 +650,8 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="#" onclick="alert('功能开发中...')">
+                            <a class="nav-link {% if request.endpoint == 'backup_logs' or request.endpoint == 'backup_log_detail' %}active{% endif %}"
+                               href="{{ url_for('backup_logs') }}">
                                 <i class="bi bi-clock-history"></i> 备份日志
                             </a>
                         </li>
@@ -615,7 +662,8 @@
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="#" onclick="alert('功能开发中...')">
+                            <a class="nav-link {% if request.endpoint == 'system_settings' %}active{% endif %}"
+                               href="{{ url_for('system_settings') }}">
                                 <i class="bi bi-gear"></i> 系统设置
                             </a>
                         </li>

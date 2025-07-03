@@ -83,14 +83,10 @@
 
 /* 时间显示样式 */
 .time-display {
-    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-    border: 1px solid rgba(59, 130, 246, 0.2);
-    border-radius: 6px;
-    padding: 0.375rem 0.75rem;
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
     font-size: 0.875rem;
     font-weight: 600;
-    color: #1e40af;
+    color: #374151;
     white-space: nowrap;
 }
 
@@ -148,6 +144,28 @@
     font-size: 1.125rem;
     font-weight: 700;
     line-height: 1.2;
+}
+
+/* 时间显示样式 */
+.time-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.1rem;
+}
+
+.time-main {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #374151;
+    line-height: 1;
+}
+
+.time-sub {
+    font-size: 0.75rem;
+    color: #6b7280;
+    font-weight: 500;
+    line-height: 1;
 }
 
 /* 响应式设计 */
@@ -304,7 +322,9 @@
                             <span class="info-label">
                                 <i class="bi bi-calendar-event me-1"></i>下次运行
                             </span>
-                            {% if task.next_run_at %}
+                            {% if task.next_run_at_local %}
+                                <span class="time-display">{{ task.next_run_at_local.strftime('%m-%d %H:%M') }}</span>
+                            {% elif task.next_run_at %}
                                 <span class="time-display">{{ task.next_run_at.strftime('%m-%d %H:%M') }}</span>
                             {% else %}
                                 <span class="text-muted">计算中...</span>
@@ -340,7 +360,10 @@
                                     <div class="stat-label">最后运行</div>
                                     <div class="stat-value">
                                         {% if task.last_run_at %}
-                                            {{ task.last_run_at.strftime('%m-%d %H:%M') }}
+                                            <div class="time-display">
+                                                <div class="time-main">{{ task.last_run_at_local.strftime('%m-%d') if task.last_run_at_local else task.last_run_at.strftime('%m-%d') }}</div>
+                                                <div class="time-sub">{{ task.last_run_at_local.strftime('%H:%M') if task.last_run_at_local else task.last_run_at.strftime('%H:%M') }}</div>
+                                            </div>
                                         {% else %}
                                             <span class="text-muted">从未运行</span>
                                         {% endif %}
@@ -359,6 +382,11 @@
                                 title="立即运行备份任务">
                             <i class="bi bi-play-fill me-1"></i>运行
                         </button>
+                        <a href="{{ url_for('backup_logs', task_id=task.id) }}"
+                           class="btn btn-action btn-outline-info"
+                           title="查看备份日志">
+                            <i class="bi bi-clock-history me-1"></i>日志
+                        </a>
                         <a href="{{ url_for('edit_backup_task', task_id=task.id) }}"
                            class="btn btn-action btn-outline-secondary"
                            title="编辑任务配置">

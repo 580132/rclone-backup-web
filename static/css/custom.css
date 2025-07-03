@@ -594,6 +594,8 @@ input:checked + .slider:before {
     border-radius: 8px;
     transition: all 0.3s ease;
     border-width: 1.5px;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 .btn-action:hover {
@@ -610,6 +612,7 @@ input:checked + .slider:before {
     border-width: 1px;
     flex: 1;
     min-width: 0;
+    white-space: nowrap;
 }
 
 .btn-action-sm:hover {
@@ -1792,14 +1795,14 @@ input:checked + .slider:before {
 
 .action-buttons .btn-action {
     flex: 1;
-    padding: 0.75rem 1rem;
+    padding: 0.75rem 0.5rem;
     font-size: 0.875rem;
     font-weight: 600;
     border-radius: 10px;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     border-width: 1.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 .action-buttons .btn-action:hover {
@@ -1976,6 +1979,23 @@ input:checked + .slider:before {
     background: #ffffff;
     border-color: rgba(73, 80, 87, 0.3);
     color: #495057;
+}
+
+/* 信息按钮样式 */
+.btn-outline-info {
+    border-color: rgba(13, 110, 253, 0.3);
+    color: #0d6efd;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    background: #ffffff;
+}
+
+.btn-outline-info:hover {
+    background-color: rgba(13, 110, 253, 0.1);
+    border-color: #0d6efd;
+    color: #0d6efd;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(13, 110, 253, 0.2);
 }
 
 .btn-outline-secondary.btn-sm:hover {

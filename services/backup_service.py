@@ -106,7 +106,7 @@ class BackupService:
             log = BackupLog(
                 task_id=task_id,
                 status='running',
-                start_time=datetime.utcnow()
+                start_time=self._get_local_time()
             )
             db.session.add(log)
             db.session.commit()
@@ -117,12 +117,12 @@ class BackupService:
                 
                 # 更新日志状态
                 log.status = 'success' if success else 'failed'
-                log.end_time = datetime.utcnow()
+                log.end_time = self._get_local_time()
                 if not success:
                     log.error_message = message
-                
+
                 # 更新任务的最后运行时间
-                task.last_run_at = datetime.utcnow()
+                task.last_run_at = self._get_local_time()
                 if not manual and task.cron_expression:
                     task.next_run_at = self._calculate_next_run_time(task.cron_expression)
                 
@@ -134,7 +134,7 @@ class BackupService:
             except Exception as e:
                 # 更新日志为失败状态
                 log.status = 'failed'
-                log.end_time = datetime.utcnow()
+                log.end_time = self._get_local_time()
                 log.error_message = str(e)
                 db.session.commit()
                 
@@ -344,6 +344,21 @@ class BackupService:
         except Exception as e:
             self.logger.error(f"Failed to calculate next run time: {e}")
             return None
+
+    def _get_local_time(self) -> datetime:
+        """获取本地时间（Asia/Shanghai时区）"""
+        try:
+            import pytz
+
+            # 获取Asia/Shanghai时区的当前时间
+            local_tz = pytz.timezone('Asia/Shanghai')
+            local_time = datetime.now(local_tz)
+            # 返回无时区信息的本地时间，用于数据库存储
+            return local_time.replace(tzinfo=None)
+        except Exception as e:
+            self.logger.warning(f"Failed to get local time, using system time: {e}")
+            # 如果获取本地时间失败，使用系统时间
+            return datetime.now()
     
     def update_backup_task(self, task_id: int, task_data: Dict) -> Tuple[bool, str, Optional[BackupTask]]:
         """更新备份任务"""
@@ -393,7 +408,7 @@ class BackupService:
             task.encryption_password = encryption_password
             task.retention_count = task_data.get('retention_count', 10)
             task.is_active = task_data.get('is_active', True)
-            task.updated_at = datetime.utcnow()
+            task.updated_at = self._get_local_time()
 
             # 重新计算下次运行时间
             if task.cron_expression:

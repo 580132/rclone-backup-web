@@ -105,7 +105,11 @@ def run_scheduled_task_check():
                 from models import db, BackupLog
 
                 # 检查运行时间过长的任务（超过6小时）
-                cutoff_time = datetime.utcnow() - timedelta(hours=6)
+                import pytz
+                local_tz = pytz.timezone('Asia/Shanghai')
+                current_time = datetime.now(local_tz).replace(tzinfo=None)
+                cutoff_time = current_time - timedelta(hours=6)
+
                 stuck_logs = BackupLog.query.filter(
                     BackupLog.status == 'running',
                     BackupLog.start_time < cutoff_time
@@ -113,7 +117,7 @@ def run_scheduled_task_check():
 
                 for log in stuck_logs:
                     log.status = 'failed'
-                    log.end_time = datetime.utcnow()
+                    log.end_time = current_time
                     log.error_message = '任务执行超时，已自动标记为失败'
                     logger.warning(f"Marked stuck backup log {log.id} as failed")
 
