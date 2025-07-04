@@ -120,14 +120,8 @@ pip install -r requirements.txt
 
 3. **启动系统**
 ```bash
-# 方法1: 使用简化启动脚本（推荐）
-python3 start_app.py
-
-# 方法2: 使用完整启动脚本
+# 启动系统
 python3 run.py
-
-# 方法3: 使用测试版本
-python3 test_app.py
 ```
 
 4. **访问系统**

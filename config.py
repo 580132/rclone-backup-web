@@ -21,7 +21,7 @@ class Config:
     MAX_BACKUP_SIZE = 10 * 1024 * 1024 * 1024  # 10GB
 
     # 日志配置 - 使用相对路径
-    LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'DEBUG'  # 临时改为DEBUG
+    LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
     LOG_FILE = 'logs/app.log'
     
     # 调度器配置
