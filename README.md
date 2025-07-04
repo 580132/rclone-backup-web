@@ -119,6 +119,14 @@ pip install -r requirements.txt
 ```
 
 3. **启动系统**
+
+**方法1: Docker部署（推荐）**
+```bash
+# 使用Docker Compose启动
+docker-compose up -d
+```
+
+**方法2: 本地部署**
 ```bash
 # 启动系统
 python3 run.py
@@ -131,6 +139,7 @@ python3 run.py
 
 ## 📖 文档
 
+- [🐳 Docker部署指南](./DOCKER_DEPLOYMENT.md) - Docker容器化部署完整指南
 - [🧪 测试教程](./TESTING_GUIDE.md) - 完整的测试指南和故障排除
 - [📋 系统设计](./SIMPLIFIED_DESIGN.md) - 系统设计和架构说明
 - [🚀 安装指南](./INSTALL_GUIDE.md) - 详细的安装和配置说明

@@ -9,21 +9,52 @@ import logging
 from app import create_app, init_database
 
 def check_rclone():
-    """检查rclone是否已安装"""
+    """检查rclone是否可用"""
     try:
         import subprocess
-        result = subprocess.run(['rclone', 'version'], 
-                              capture_output=True, 
-                              text=True, 
-                              timeout=10)
-        if result.returncode == 0:
-            print("✓ rclone已安装")
-            return True
+        from config import Config
+
+        if Config.DOCKER_ENV:
+            # Docker环境：检查rclone容器是否运行
+            print("检查Docker环境中的rclone容器...")
+            result = subprocess.run(['docker', 'ps', '--format', 'table {{.Names}}'],
+                                  capture_output=True,
+                                  text=True,
+                                  timeout=10)
+            if result.returncode == 0 and Config.RCLONE_CONTAINER_NAME in result.stdout:
+                print(f"✓ rclone容器 '{Config.RCLONE_CONTAINER_NAME}' 正在运行")
+
+                # 测试容器中的rclone命令
+                test_result = subprocess.run(['docker', 'exec', Config.RCLONE_CONTAINER_NAME, 'rclone', 'version'],
+                                           capture_output=True,
+                                           text=True,
+                                           timeout=10)
+                if test_result.returncode == 0:
+                    print("✓ rclone容器中的rclone命令可用")
+                    return True
+                else:
+                    print("✗ rclone容器中的rclone命令不可用")
+                    return False
+            else:
+                print(f"✗ rclone容器 '{Config.RCLONE_CONTAINER_NAME}' 未运行")
+                return False
         else:
-            print("✗ rclone未正确安装")
-            return False
+            # 本地环境：检查本地rclone二进制文件
+            result = subprocess.run(['rclone', 'version'],
+                                  capture_output=True,
+                                  text=True,
+                                  timeout=10)
+            if result.returncode == 0:
+                print("✓ 本地rclone已安装")
+                return True
+            else:
+                print("✗ 本地rclone未正确安装")
+                return False
     except FileNotFoundError:
-        print("✗ 未找到rclone命令")
+        if Config.DOCKER_ENV:
+            print("✗ 未找到docker命令")
+        else:
+            print("✗ 未找到rclone命令")
         return False
     except Exception as e:
         print(f"✗ 检查rclone时出错: {e}")

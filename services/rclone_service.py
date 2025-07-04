@@ -8,19 +8,63 @@ from config import Config
 
 class RcloneService:
     """rclone服务类"""
-    
+
     def __init__(self):
         self.config_dir = Config.RCLONE_CONFIG_DIR
         self.rclone_binary = Config.RCLONE_BINARY
+        self.docker_env = Config.DOCKER_ENV
+        self.rclone_container_name = Config.RCLONE_CONTAINER_NAME
         self.logger = logging.getLogger(__name__)
-        
+
         # 确保配置目录存在
         os.makedirs(self.config_dir, exist_ok=True)
+
+        self.logger.info(f"RcloneService initialized - Docker环境: {self.docker_env}")
+        if self.docker_env:
+            self.logger.info(f"rclone容器名称: {self.rclone_container_name}")
+        else:
+            self.logger.info(f"rclone二进制文件: {self.rclone_binary}")
     
     def get_config_path(self, config_name: str = None) -> str:
         """获取配置文件路径"""
         # 使用rclone标准配置文件名
         return os.path.join(self.config_dir, 'rclone.conf')
+
+    def _build_rclone_command(self, rclone_args: List[str], local_paths: List[str] = None) -> List[str]:
+        """构建rclone命令，根据环境选择直接调用或Docker调用"""
+        if self.docker_env:
+            # Docker环境：通过docker exec调用rclone容器
+            cmd = ['docker', 'exec', self.rclone_container_name, 'rclone']
+
+            # 处理参数中的路径映射
+            processed_args = []
+            for arg in rclone_args:
+                if arg == '--config':
+                    processed_args.append(arg)
+                elif arg.startswith(self.config_dir):
+                    # 配置文件路径映射到容器内路径
+                    processed_args.append('/config/rclone/rclone.conf')
+                elif local_paths and any(arg.startswith(path) for path in local_paths):
+                    # 本地文件路径映射到容器内路径
+                    for local_path in local_paths:
+                        if arg.startswith(local_path):
+                            # 将本地路径映射到容器内的/data/temp路径
+                            relative_path = os.path.relpath(arg, local_path)
+                            container_path = f'/data/temp/{relative_path}' if relative_path != '.' else '/data/temp'
+                            processed_args.append(container_path)
+                            break
+                    else:
+                        processed_args.append(arg)
+                else:
+                    processed_args.append(arg)
+
+            cmd.extend(processed_args)
+        else:
+            # 本地环境：直接调用rclone
+            cmd = [self.rclone_binary]
+            cmd.extend(rclone_args)
+
+        return cmd
     
     def create_config(self, name: str, storage_type: str, config_data: Dict) -> bool:
         """创建rclone配置"""
@@ -298,10 +342,8 @@ port = {config_data.get('port', 21)}
             # 对于Cloudflare R2，先验证配置，然后尝试简单的连接测试
             if config_name.find('cloudflare') != -1 or 'r2' in config_name.lower():
                 # 第一步：验证配置是否存在
-                verify_cmd = [
-                    self.rclone_binary, 'config', 'show', config_name,
-                    '--config', config_path
-                ]
+                verify_args = ['config', 'show', config_name, '--config', config_path]
+                verify_cmd = self._build_rclone_command(verify_args)
 
                 self.logger.info(f"Verifying config exists: {' '.join(verify_cmd)}")
                 verify_result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=10)
@@ -313,20 +355,12 @@ port = {config_data.get('port', 21)}
                 self.logger.info(f"Config verification successful, config content:\n{verify_result.stdout}")
 
                 # 第二步：尝试连接测试（允许失败）
-                cmd = [
-                    self.rclone_binary, 'lsd', f'{config_name}:',
-                    '--config', config_path,
-                    '--timeout', '15s',
-                    '--retries', '1'
-                ]
+                test_args = ['lsd', f'{config_name}:', '--config', config_path, '--timeout', '15s', '--retries', '1']
+                cmd = self._build_rclone_command(test_args)
             else:
                 # 其他存储类型使用标准测试
-                cmd = [
-                    self.rclone_binary, 'lsd', f'{config_name}:',
-                    '--config', config_path,
-                    '--timeout', '30s',
-                    '-vv'
-                ]
+                test_args = ['lsd', f'{config_name}:', '--config', config_path, '--timeout', '30s', '-vv']
+                cmd = self._build_rclone_command(test_args)
 
             self.logger.info(f"Executing rclone test command: {' '.join(cmd)}")
 
@@ -399,8 +433,9 @@ port = {config_data.get('port', 21)}
             except Exception as e:
                 self.logger.warning(f"Could not read config file for logging: {e}")
 
-            cmd = [
-                self.rclone_binary, 'copy',
+            # 构建rclone copy命令参数
+            copy_args = [
+                'copy',
                 local_path,
                 f'{config_name}:{remote_path}',
                 '--config', config_path,
@@ -409,6 +444,10 @@ port = {config_data.get('port', 21)}
                 '--stats', '1s',
                 '-vv'  # 增加详细输出
             ]
+
+            # 传递本地路径信息用于Docker环境的路径映射
+            local_paths = [os.path.dirname(local_path)] if self.docker_env else None
+            cmd = self._build_rclone_command(copy_args, local_paths)
 
             self.logger.info(f"Starting upload: {local_path} -> {config_name}:{remote_path}")
             self.logger.info(f"Executing rclone command: {' '.join(cmd)}")
@@ -464,14 +503,19 @@ port = {config_data.get('port', 21)}
             os.makedirs(local_dir, exist_ok=True)
             self.logger.info(f"Created local directory: {local_dir}")
 
-            cmd = [
-                self.rclone_binary, 'copy',
+            # 构建rclone copy命令参数
+            copy_args = [
+                'copy',
                 f'{config_name}:{remote_path}',
                 local_path,
                 '--config', config_path,
                 '--progress',
                 '-vv'  # 增加详细输出
             ]
+
+            # 传递本地路径信息用于Docker环境的路径映射
+            local_paths = [os.path.dirname(local_path)] if self.docker_env else None
+            cmd = self._build_rclone_command(copy_args, local_paths)
 
             self.logger.info(f"Starting download: {config_name}:{remote_path} -> {local_path}")
             self.logger.info(f"Executing rclone command: {' '.join(cmd)}")
@@ -519,12 +563,15 @@ port = {config_data.get('port', 21)}
                 self.logger.error(f"Config file does not exist: {config_path}")
                 return False, [], "配置文件不存在"
 
-            cmd = [
-                self.rclone_binary, 'lsjson',
+            # 构建rclone lsjson命令参数
+            lsjson_args = [
+                'lsjson',
                 f'{config_name}:{remote_path}',
                 '--config', config_path,
                 '-vv'  # 增加详细输出
             ]
+
+            cmd = self._build_rclone_command(lsjson_args)
 
             self.logger.info(f"Executing rclone list command: {' '.join(cmd)}")
 
@@ -572,12 +619,15 @@ port = {config_data.get('port', 21)}
                 self.logger.error(f"Config file does not exist: {config_path}")
                 return False, "配置文件不存在"
 
-            cmd = [
-                self.rclone_binary, 'deletefile',
+            # 构建rclone deletefile命令参数
+            delete_args = [
+                'deletefile',
                 f'{config_name}:{remote_path}',
                 '--config', config_path,
                 '-vv'  # 增加详细输出
             ]
+
+            cmd = self._build_rclone_command(delete_args)
 
             self.logger.info(f"Executing rclone delete command: {' '.join(cmd)}")
 
