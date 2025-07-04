@@ -18,6 +18,7 @@ import hashlib
 
 from models import db, BackupTask, BackupLog, StorageConfig
 from services.rclone_service import RcloneService
+from config import Config
 
 
 class BackupService:
@@ -39,7 +40,9 @@ class BackupService:
             
             # 验证源路径是否存在
             source_path = task_data.get('source_path')
-            if not os.path.exists(source_path):
+            # 转换为实际的宿主机路径进行验证
+            actual_source_path = Config.get_host_path(source_path)
+            if not os.path.exists(actual_source_path):
                 return False, "源路径不存在", None
             
             # 检查任务名称是否重复
@@ -150,8 +153,11 @@ class BackupService:
         """执行具体的备份操作"""
         temp_file = None
         try:
+            # 获取实际的源路径
+            actual_source_path = Config.get_host_path(task.source_path)
+
             # 获取源文件/目录大小
-            original_size = self._get_path_size(task.source_path)
+            original_size = self._get_path_size(actual_source_path)
             log.original_size = original_size
             db.session.commit()
             
@@ -163,10 +169,10 @@ class BackupService:
                 # 压缩文件
                 if task.compression_type == 'tar.gz':
                     temp_file = os.path.join(self.temp_dir, f"{base_name}.tar.gz")
-                    success, message = self._create_tar_archive(task.source_path, temp_file)
+                    success, message = self._create_tar_archive(actual_source_path, temp_file)
                 elif task.compression_type == 'zip':
                     temp_file = os.path.join(self.temp_dir, f"{base_name}.zip")
-                    success, message = self._create_zip_archive(task.source_path, temp_file)
+                    success, message = self._create_zip_archive(actual_source_path, temp_file)
                 else:
                     return False, f"不支持的压缩格式: {task.compression_type}"
                 
@@ -177,9 +183,9 @@ class BackupService:
                 log.compressed_size = compressed_size
             else:
                 # 不压缩，直接复制
-                if os.path.isfile(task.source_path):
-                    temp_file = os.path.join(self.temp_dir, f"{base_name}_{os.path.basename(task.source_path)}")
-                    shutil.copy2(task.source_path, temp_file)
+                if os.path.isfile(actual_source_path):
+                    temp_file = os.path.join(self.temp_dir, f"{base_name}_{os.path.basename(actual_source_path)}")
+                    shutil.copy2(actual_source_path, temp_file)
                 else:
                     return False, "不压缩模式下只支持单个文件备份"
                 
@@ -374,7 +380,9 @@ class BackupService:
 
             # 验证源路径是否存在
             source_path = task_data.get('source_path')
-            if not os.path.exists(source_path):
+            # 转换为实际的宿主机路径进行验证
+            actual_source_path = Config.get_host_path(source_path)
+            if not os.path.exists(actual_source_path):
                 return False, "源路径不存在", None
 
             # 检查任务名称是否重复（排除当前任务）

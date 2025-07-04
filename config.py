@@ -15,6 +15,12 @@ class Config:
     # Docker环境检测
     DOCKER_ENV = os.environ.get('DOCKER_ENV', 'false').lower() == 'true'
 
+    # 文件系统根目录前缀 - Docker环境中宿主机根目录挂载到/host
+    if DOCKER_ENV:
+        HOST_ROOT_PREFIX = '/host'
+    else:
+        HOST_ROOT_PREFIX = ''
+
     # rclone配置 - 根据环境选择配置目录
     if DOCKER_ENV:
         RCLONE_CONFIG_DIR = os.environ.get('RCLONE_CONFIG_DIR') or '/app/data/rclone_configs'
@@ -37,6 +43,36 @@ class Config:
     SCHEDULER_API_ENABLED = True
     
     @staticmethod
+    def get_host_path(path: str) -> str:
+        """
+        获取宿主机路径
+        在Docker环境中，将容器内路径转换为宿主机路径
+        在本地环境中，直接返回原路径
+        """
+        if Config.DOCKER_ENV and Config.HOST_ROOT_PREFIX:
+            # 如果路径已经包含前缀，直接返回
+            if path.startswith(Config.HOST_ROOT_PREFIX):
+                return path
+            # 如果是绝对路径，添加前缀
+            if path.startswith('/'):
+                return Config.HOST_ROOT_PREFIX + path
+            # 相对路径，添加前缀和根目录
+            return Config.HOST_ROOT_PREFIX + '/' + path
+        return path
+
+    @staticmethod
+    def get_display_path(path: str) -> str:
+        """
+        获取显示路径
+        在Docker环境中，移除宿主机前缀显示给用户
+        在本地环境中，直接返回原路径
+        """
+        if Config.DOCKER_ENV and Config.HOST_ROOT_PREFIX and path.startswith(Config.HOST_ROOT_PREFIX):
+            display_path = path[len(Config.HOST_ROOT_PREFIX):]
+            return display_path if display_path else '/'
+        return path
+
+    @staticmethod
     def init_app(app):
         # 创建必要的目录
         directories = [
@@ -55,6 +91,7 @@ class Config:
         if Config.DOCKER_ENV:
             print("✓ Docker环境模式")
             print(f"✓ rclone容器名称: {Config.RCLONE_CONTAINER_NAME}")
+            print(f"✓ 宿主机根目录前缀: {Config.HOST_ROOT_PREFIX}")
         else:
             print("✓ 本地环境模式")
             print(f"✓ rclone二进制文件: {Config.RCLONE_BINARY}")

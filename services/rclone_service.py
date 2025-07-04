@@ -44,17 +44,14 @@ class RcloneService:
                 elif arg.startswith(self.config_dir):
                     # 配置文件路径映射到容器内路径
                     processed_args.append('/config/rclone/rclone.conf')
-                elif local_paths and any(arg.startswith(path) for path in local_paths):
-                    # 本地文件路径映射到容器内路径
-                    for local_path in local_paths:
-                        if arg.startswith(local_path):
-                            # 将本地路径映射到容器内的/data/temp路径
-                            relative_path = os.path.relpath(arg, local_path)
-                            container_path = f'/data/temp/{relative_path}' if relative_path != '.' else '/data/temp'
-                            processed_args.append(container_path)
-                            break
-                    else:
-                        processed_args.append(arg)
+                elif arg.startswith('/app/data/temp'):
+                    # 临时文件路径映射到rclone容器内路径
+                    relative_path = os.path.relpath(arg, '/app/data/temp')
+                    container_path = f'/data/temp/{relative_path}' if relative_path != '.' else '/data/temp'
+                    processed_args.append(container_path)
+                elif arg.startswith('/host'):
+                    # 宿主机路径在rclone容器中也是/host
+                    processed_args.append(arg)
                 else:
                     processed_args.append(arg)
 

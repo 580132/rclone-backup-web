@@ -1,5 +1,8 @@
 version: '3.8'
 
+# 安全的Docker Compose配置示例
+# 只挂载需要备份的特定目录，而不是整个根目录
+
 services:
   backup-web:
     build: .
@@ -14,8 +17,17 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # rclone配置文件
       - ./data/rclone_configs:/app/data/rclone_configs
+      
       # 备份源目录挂载：将宿主机根目录挂载到容器的/host目录
       - /:/host:ro  # 挂载整个宿主机根目录到/host（只读）
+
+      # 可选：如果只想挂载特定目录，可以使用以下配置替代上面的配置
+      # - /home:/host/home:ro
+      # - /etc:/host/etc:ro
+      # - /var/www:/host/var/www:ro
+      # - /var/log:/host/var/log:ro
+      # - /var/lib:/host/var/lib:ro
+      
     environment:
       - FLASK_ENV=production
       - DOCKER_ENV=true
@@ -35,8 +47,10 @@ services:
       - ./data/rclone_configs:/config/rclone
       # 临时文件目录（与主应用共享）
       - ./data/temp:/data/temp
-      # 备份源目录（与主应用保持一致的挂载）
+      
+      # 备份源目录（必须与backup-web容器保持完全一致）
       - /:/host:ro  # 挂载整个宿主机根目录到/host（只读）
+      
     environment:
       - RCLONE_CONFIG=/config/rclone/rclone.conf
     networks:

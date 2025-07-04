@@ -719,19 +719,23 @@ def create_app(config_name='default'):
         from pathlib import Path
 
         try:
+            from config import Config
             # 获取请求的路径，默认为根目录
-            path = request.args.get('path', '/')
+            display_path = request.args.get('path', '/')
+
+            # 转换为实际的宿主机路径
+            actual_path = Config.get_host_path(display_path)
 
             # 安全检查：确保路径是绝对路径
-            if not os.path.isabs(path):
-                path = os.path.abspath(path)
+            if not os.path.isabs(actual_path):
+                actual_path = os.path.abspath(actual_path)
 
             # 检查路径是否存在
-            if not os.path.exists(path):
+            if not os.path.exists(actual_path):
                 return jsonify({'error': '路径不存在'}), 404
 
             # 检查是否有读取权限
-            if not os.access(path, os.R_OK):
+            if not os.access(actual_path, os.R_OK):
                 return jsonify({'error': '没有读取权限'}), 403
 
             directories = []
@@ -739,17 +743,22 @@ def create_app(config_name='default'):
 
             try:
                 # 获取目录内容
-                for item in os.listdir(path):
-                    item_path = os.path.join(path, item)
+                for item in os.listdir(actual_path):
+                    item_actual_path = os.path.join(actual_path, item)
 
                     try:
                         # 获取文件状态
-                        stat_info = os.stat(item_path)
+                        stat_info = os.stat(item_actual_path)
                         is_dir = stat.S_ISDIR(stat_info.st_mode)
+
+                        # 计算显示路径（用户看到的路径）
+                        item_display_path = os.path.join(display_path, item)
+                        if display_path == '/':
+                            item_display_path = '/' + item
 
                         item_info = {
                             'name': item,
-                            'path': item_path,
+                            'path': item_display_path,  # 返回显示路径给前端
                             'is_directory': is_dir,
                             'size': stat_info.st_size if not is_dir else 0,
                             'modified': stat_info.st_mtime
@@ -759,8 +768,8 @@ def create_app(config_name='default'):
                             # 检查是否有子目录
                             try:
                                 has_children = any(
-                                    os.path.isdir(os.path.join(item_path, child))
-                                    for child in os.listdir(item_path)
+                                    os.path.isdir(os.path.join(item_actual_path, child))
+                                    for child in os.listdir(item_actual_path)
                                 )
                                 item_info['has_children'] = has_children
                             except (PermissionError, OSError):
@@ -781,11 +790,11 @@ def create_app(config_name='default'):
             directories.sort(key=lambda x: x['name'].lower())
             files.sort(key=lambda x: x['name'].lower())
 
-            # 获取父目录路径
-            parent_path = os.path.dirname(path) if path != '/' else None
+            # 获取父目录路径（显示路径）
+            parent_path = os.path.dirname(display_path) if display_path != '/' else None
 
             return jsonify({
-                'current_path': path,
+                'current_path': display_path,  # 返回显示路径
                 'parent_path': parent_path,
                 'directories': directories,
                 'files': files
