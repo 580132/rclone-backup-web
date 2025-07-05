@@ -125,11 +125,20 @@ def create_app(config_name='default'):
     @login_required
     def storage_configs():
         """存储配置页面"""
+        from services.template_loader import TemplateLoader
+
         configs = StorageConfig.query.all()
         storage_types = rclone_service.get_supported_types()
-        return render_template('storage_configs.html', 
-                             configs=configs, 
-                             storage_types=storage_types)
+
+        # 获取模块化的模板和类型信息
+        config_templates = TemplateLoader.get_storage_config_templates()
+        storage_type_info = TemplateLoader.get_storage_type_info()
+
+        return render_template('storage_configs_modular.html',
+                             configs=configs,
+                             storage_types=storage_types,
+                             config_templates=config_templates,
+                             storage_type_info=storage_type_info)
     
     @app.route('/storage-configs/create', methods=['POST'])
     @login_required
@@ -142,6 +151,7 @@ def create_app(config_name='default'):
             name = request.form.get('name', '').strip()
             storage_type = request.form.get('storage_type', '').strip()
             description = request.form.get('description', '').strip()
+            test_path = request.form.get('test_path', '').strip() or None
 
             app.logger.info(f"Creating storage config - name: '{name}', type: '{storage_type}'")
 
@@ -150,81 +160,10 @@ def create_app(config_name='default'):
                 flash('请填写配置名称和存储类型', 'error')
                 return redirect(url_for('storage_configs'))
 
-            # 收集配置数据
-            config_data = {}
-            if storage_type in ['s3', 'alibaba_oss', 'cloudflare_r2']:
-                # 根据存储类型读取对应的字段
-                if storage_type == 's3':
-                    raw_access_key = request.form.get('access_key', '')
-                    raw_secret_key = request.form.get('secret_key', '')
-                    raw_region = request.form.get('region', '')
-                    raw_endpoint = request.form.get('endpoint', '')
-                    raw_bucket = request.form.get('bucket', '')
-                elif storage_type == 'alibaba_oss':
-                    raw_access_key = request.form.get('oss_access_key', '')  # 阿里云OSS使用专用字段名
-                    raw_secret_key = request.form.get('oss_secret_key', '')
-                    raw_region = request.form.get('region', '')
-                    raw_endpoint = request.form.get('oss_endpoint', '')
-                    raw_bucket = request.form.get('bucket', '')
-                elif storage_type == 'cloudflare_r2':
-                    raw_access_key = request.form.get('r2_access_key', '')  # R2使用专用字段名
-                    raw_secret_key = request.form.get('r2_secret_key', '')
-                    raw_region = request.form.get('region', '')
-                    raw_endpoint = request.form.get('r2_endpoint', '')
-                    raw_bucket = request.form.get('bucket', '')
-
-                config_data = {
-                    'access_key': raw_access_key.strip(),
-                    'secret_key': raw_secret_key.strip(),
-                    'region': raw_region.strip(),
-                    'endpoint': raw_endpoint.strip(),
-                    'bucket': raw_bucket.strip()
-                }
-
-                # 设置默认值
-                if storage_type == 's3' and not config_data['region']:
-                    config_data['region'] = 'us-east-1'
-                elif storage_type == 'alibaba_oss' and not config_data['region']:
-                    config_data['region'] = 'oss-cn-hangzhou'
-                elif storage_type == 'cloudflare_r2':
-                    config_data['region'] = 'auto'  # Cloudflare R2 固定使用 auto
-
-                # 验证必填字段
-                if storage_type == 'cloudflare_r2':
-                    if not config_data['access_key'] or not config_data['secret_key'] or not config_data['endpoint']:
-                        flash('请填写所有必填字段：Access Key ID、Secret Access Key、Endpoint', 'error')
-                        return redirect(url_for('storage_configs'))
-
-            elif storage_type == 'google_drive':
-                config_data = {
-                    'client_id': request.form.get('client_id', '').strip(),
-                    'client_secret': request.form.get('client_secret', '').strip(),
-                    'scope': request.form.get('scope', 'drive').strip(),
-                    'root_folder_id': request.form.get('root_folder_id', '').strip(),
-                    'service_account_credentials': request.form.get('service_account_credentials', '').strip()
-                }
-
-            elif storage_type == 'sftp':
-                config_data = {
-                    'host': request.form.get('host', '').strip(),
-                    'username': request.form.get('username', '').strip(),
-                    'password': request.form.get('password', '').strip(),
-                    'port': request.form.get('port', '22').strip(),
-                    'key_file': request.form.get('key_file', '').strip(),
-                    'key_pass': request.form.get('key_pass', '').strip(),
-                    'use_insecure_cipher': request.form.get('use_insecure_cipher') == 'on',
-                    'disable_hashcheck': request.form.get('disable_hashcheck') == 'on'
-                }
-
-            elif storage_type == 'ftp':
-                config_data = {
-                    'host': request.form.get('host', '').strip(),
-                    'username': request.form.get('username', '').strip(),
-                    'password': request.form.get('password', '').strip(),
-                    'port': request.form.get('port', '21').strip()
-                }
-            else:
-                flash(f'不支持的存储类型: {storage_type}', 'error')
+            # 使用模块化系统处理表单数据
+            success, error_msg, config_data = config_service.process_form_data(storage_type, dict(request.form))
+            if not success:
+                flash(error_msg, 'error')
                 return redirect(url_for('storage_configs'))
 
             # 使用ConfigService创建配置
@@ -234,6 +173,7 @@ def create_app(config_name='default'):
                 storage_type=storage_type,
                 config_data=config_data,
                 description=description,
+                test_path=test_path,
                 created_by=current_user
             )
 
@@ -250,14 +190,19 @@ def create_app(config_name='default'):
 
         return redirect(url_for('storage_configs'))
     
-    @app.route('/storage-configs/<int:config_id>/test')
+
+
+    @app.route('/storage-configs/<int:config_id>/test', methods=['POST'])
     @login_required
     def test_storage_config(config_id):
-        """测试存储配置"""
+        """测试存储配置连接"""
         try:
             config = StorageConfig.query.get_or_404(config_id)
-            success, message = rclone_service.test_connection(config.rclone_config_name)
-            
+            success, message = rclone_service.test_connection(
+                config.rclone_config_name,
+                config.test_path
+            )
+
             return jsonify({
                 'success': success,
                 'message': message
@@ -266,7 +211,29 @@ def create_app(config_name='default'):
             app.logger.error(f"Storage config test error: {e}")
             return jsonify({
                 'success': False,
-                'message': f'测试失败: {str(e)}'
+                'message': f'连接测试失败: {str(e)}'
+            })
+
+    @app.route('/storage-configs/<int:config_id>/test-backup')
+    @login_required
+    def test_backup_upload(config_id):
+        """测试真实备份上传"""
+        try:
+            config = StorageConfig.query.get_or_404(config_id)
+            success, message = rclone_service.test_backup_upload(
+                config.rclone_config_name,
+                config.test_path
+            )
+
+            return jsonify({
+                'success': success,
+                'message': message
+            })
+        except Exception as e:
+            app.logger.error(f"Backup upload test error: {e}")
+            return jsonify({
+                'success': False,
+                'message': f'备份测试失败: {str(e)}'
             })
     
     @app.route('/storage-configs/<int:config_id>/edit')
@@ -299,6 +266,7 @@ def create_app(config_name='default'):
             # 获取基本信息
             name = request.form.get('name', '').strip()
             description = request.form.get('description', '').strip()
+            test_path = request.form.get('test_path', '').strip() or None
 
             # 获取当前配置信息
             config_details = config_service.get_storage_config_details(config_id)
@@ -394,6 +362,7 @@ def create_app(config_name='default'):
                 name=name,
                 config_data=config_data,
                 description=description,
+                test_path=test_path,
                 created_by=current_user
             )
 
@@ -532,13 +501,11 @@ def create_app(config_name='default'):
             from services.backup_service import BackupService
             backup_service = BackupService()
 
-            # 获取表单数据
+            # 获取基本表单数据
             task_data = {
                 'name': request.form.get('name'),
                 'description': request.form.get('description', ''),
                 'source_path': request.form.get('source_path'),
-                'storage_config_id': int(request.form.get('storage_config_id')),
-                'remote_path': request.form.get('remote_path'),
                 'cron_expression': request.form.get('cron_expression', ''),
                 'compression_enabled': request.form.get('compression_enabled') == 'on',
                 'compression_type': request.form.get('compression_type', 'tar.gz'),
@@ -548,9 +515,27 @@ def create_app(config_name='default'):
                 'is_active': request.form.get('is_active') == 'on'
             }
 
+            # 获取存储配置数据
+            storage_configs_data = []
+            for key in request.form.keys():
+                if key.startswith('remote_path_'):
+                    config_id = key.replace('remote_path_', '')
+                    remote_path = request.form.get(key)
+                    if remote_path:  # 只有设置了远程路径的才算选中
+                        storage_configs_data.append({
+                            'storage_config_id': int(config_id),
+                            'remote_path': remote_path
+                        })
+
+            task_data['storage_configs'] = storage_configs_data
+
             # 验证必填字段
-            if not all([task_data['name'], task_data['source_path'], task_data['remote_path']]):
+            if not all([task_data['name'], task_data['source_path']]):
                 flash('请填写所有必填字段', 'error')
+                return redirect(url_for('backup_tasks'))
+
+            if not storage_configs_data:
+                flash('请至少选择一个存储配置', 'error')
                 return redirect(url_for('backup_tasks'))
 
             # 创建备份任务
@@ -612,8 +597,6 @@ def create_app(config_name='default'):
                 'name': request.form.get('name'),
                 'description': request.form.get('description', ''),
                 'source_path': request.form.get('source_path'),
-                'storage_config_id': int(request.form.get('storage_config_id')),
-                'remote_path': request.form.get('remote_path'),
                 'cron_expression': request.form.get('cron_expression', ''),
                 'compression_enabled': request.form.get('compression_enabled') == 'on',
                 'compression_type': request.form.get('compression_type', 'tar.gz'),
@@ -623,13 +606,42 @@ def create_app(config_name='default'):
                 'is_active': request.form.get('is_active') == 'on'
             }
 
+            # 处理存储配置数据
+            storage_configs_data = []
+
+            # 检查是否有新的多存储配置数据
+            for key in request.form.keys():
+                if key.startswith('storage_config_'):
+                    config_id = key.replace('storage_config_', '')
+                    remote_path_key = f'remote_path_{config_id}'
+                    remote_path = request.form.get(remote_path_key, '').strip()
+
+                    if remote_path:  # 只有当远程路径不为空时才添加
+                        storage_configs_data.append({
+                            'storage_config_id': int(config_id),
+                            'remote_path': remote_path
+                        })
+
+            # 如果没有新的多存储配置数据，检查旧的单存储配置
+            if not storage_configs_data:
+                storage_config_id = request.form.get('storage_config_id')
+                remote_path = request.form.get('remote_path')
+
+                if storage_config_id and remote_path:
+                    task_data['storage_config_id'] = int(storage_config_id)
+                    task_data['remote_path'] = remote_path
+                    storage_configs_data = None  # 使用旧模式
+                else:
+                    flash('请至少选择一个存储配置并设置远程路径', 'error')
+                    return redirect(url_for('edit_backup_task', task_id=task_id))
+
             # 验证必填字段
-            if not all([task_data['name'], task_data['source_path'], task_data['remote_path']]):
+            if not all([task_data['name'], task_data['source_path']]):
                 flash('请填写所有必填字段', 'error')
                 return redirect(url_for('edit_backup_task', task_id=task_id))
 
             # 更新备份任务
-            success, message, task = backup_service.update_backup_task(task_id, task_data)
+            success, message, task = backup_service.update_backup_task(task_id, task_data, storage_configs_data)
 
             if success:
                 # 更新调度器中的任务
@@ -1585,6 +1597,14 @@ def init_database(app):
             existing_tables = inspector.get_table_names()
             print(f"当前数据库中的表: {existing_tables}")
 
+            # 检查并执行数据库迁移
+            try:
+                print("检查数据库结构...")
+                _check_and_migrate_database()
+                print("数据库结构检查完成")
+            except Exception as e:
+                print(f"数据库迁移检查失败: {e}")
+
             # 创建默认管理员用户
             try:
                 if not User.query.filter_by(username='admin').first():
@@ -1603,6 +1623,30 @@ def init_database(app):
             import traceback
             traceback.print_exc()
             raise
+
+def _check_and_migrate_database():
+    """检查并执行数据库迁移"""
+    try:
+        # 检查storage_configs表是否有test_path字段
+        inspector = db.inspect(db.engine)
+
+        if 'storage_configs' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('storage_configs')]
+
+            if 'test_path' not in columns:
+                print("检测到需要添加test_path字段，执行迁移...")
+
+                # 执行ALTER TABLE添加字段
+                db.engine.execute('ALTER TABLE storage_configs ADD COLUMN test_path VARCHAR(255)')
+                print("✓ 成功添加test_path字段到storage_configs表")
+            else:
+                print("✓ storage_configs表结构已是最新版本")
+        else:
+            print("✓ storage_configs表不存在，将通过create_all创建")
+
+    except Exception as e:
+        print(f"数据库迁移检查出错: {e}")
+        # 不抛出异常，让应用继续启动
 
 if __name__ == '__main__':
     app = create_app(os.environ.get('FLASK_ENV', 'development'))

@@ -43,6 +43,7 @@ class StorageConfig(db.Model):
     storage_type = db.Column(db.String(50), nullable=False)  # s3, google_drive, etc.
     rclone_config_name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)  # 配置描述
+    test_path = db.Column(db.String(255))  # 用于测试的文件夹路径
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=get_local_time)
     updated_at = db.Column(db.DateTime, default=get_local_time, onupdate=get_local_time)
@@ -83,16 +84,37 @@ class StorageConfigHistory(db.Model):
         return f'<StorageConfigHistory {self.storage_config_id} v{self.version}>'
 
 
+class BackupTaskStorageConfig(db.Model):
+    """备份任务存储配置关联表"""
+    __tablename__ = 'backup_task_storage_configs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    backup_task_id = db.Column(db.Integer, db.ForeignKey('backup_tasks.id'), nullable=False)
+    storage_config_id = db.Column(db.Integer, db.ForeignKey('storage_configs.id'), nullable=False)
+    remote_path = db.Column(db.String(500), nullable=False)
+    created_at = db.Column(db.DateTime, default=get_local_time)
+
+    # 关联关系
+    storage_config = db.relationship('StorageConfig', backref='task_storage_configs')
+
+    # 复合唯一索引：同一任务不能重复关联同一存储配置
+    __table_args__ = (db.UniqueConstraint('backup_task_id', 'storage_config_id', name='_task_storage_uc'),)
+
+    def __repr__(self):
+        return f'<BackupTaskStorageConfig {self.backup_task_id}-{self.storage_config_id}>'
+
+
 class BackupTask(db.Model):
     """备份任务模型"""
     __tablename__ = 'backup_tasks'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
     source_path = db.Column(db.String(500), nullable=False)
-    storage_config_id = db.Column(db.Integer, db.ForeignKey('storage_configs.id'), nullable=False)
-    remote_path = db.Column(db.String(500), nullable=False)
+    # 保留原字段用于向后兼容，但标记为可空
+    storage_config_id = db.Column(db.Integer, db.ForeignKey('storage_configs.id'), nullable=True)
+    remote_path = db.Column(db.String(500), nullable=True)  # 保留用于向后兼容
     cron_expression = db.Column(db.String(100))  # cron表达式
     
     # 压缩和加密设置
@@ -113,7 +135,17 @@ class BackupTask(db.Model):
     
     # 关联的备份日志
     backup_logs = db.relationship('BackupLog', backref='task', lazy=True, order_by='BackupLog.start_time.desc()')
-    
+
+    # 多对多关系：备份任务 <-> 存储配置
+    storage_configs = db.relationship('StorageConfig',
+                                    secondary='backup_task_storage_configs',
+                                    backref=db.backref('backup_tasks_multi', lazy='dynamic'))
+
+    # 获取任务的存储配置关联记录
+    task_storage_configs = db.relationship('BackupTaskStorageConfig',
+                                         backref='backup_task',
+                                         cascade='all, delete-orphan')
+
     @property
     def latest_log(self):
         """获取最新的备份日志"""
@@ -153,12 +185,16 @@ class BackupLog(db.Model):
     status = db.Column(db.String(20), nullable=False)  # running, success, failed
     start_time = db.Column(db.DateTime, nullable=False, default=get_local_time)
     end_time = db.Column(db.DateTime)
-    
+
+    # 存储配置信息（支持多存储）
+    storage_config_id = db.Column(db.Integer, db.ForeignKey('storage_configs.id'), nullable=True)
+    remote_path = db.Column(db.String(500))  # 对应的远程路径
+
     # 文件信息
     original_size = db.Column(db.BigInteger)  # 原始文件大小
     compressed_size = db.Column(db.BigInteger)  # 压缩后大小
     final_size = db.Column(db.BigInteger)  # 最终上传大小（加密后）
-    
+
     # 错误信息
     error_message = db.Column(db.Text)
     log_details = db.Column(db.Text)  # 详细日志

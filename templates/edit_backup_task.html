@@ -47,16 +47,17 @@
                                 </div>
                                 <div class="col-md-6">
                                     <div class="mb-3">
-                                        <label for="storage_config_id" class="form-label">存储配置 *</label>
-                                        <select class="form-select" id="storage_config_id" name="storage_config_id" required>
-                                            <option value="">请选择存储配置</option>
-                                            {% for config in storage_configs %}
-                                            <option value="{{ config.id }}" 
-                                                    {% if config.id == task.storage_config_id %}selected{% endif %}>
-                                                {{ config.name }} ({{ config.storage_type }})
-                                            </option>
-                                            {% endfor %}
-                                        </select>
+                                        <label class="form-label">存储配置 *</label>
+                                        <div class="storage-configs-container">
+                                            <div class="form-text mb-2">选择一个或多个存储位置进行备份</div>
+                                            <div class="selected-storage-configs mb-3" id="selectedStorageConfigs" style="display: none;">
+                                                <div class="d-flex flex-wrap gap-2" id="selectedStorageTags"></div>
+                                            </div>
+                                            <button type="button" class="btn btn-outline-primary btn-sm" onclick="openStorageConfigModal()">
+                                                <i class="bi bi-plus-circle me-1"></i>选择存储配置
+                                            </button>
+                                            <div class="form-text mt-1">点击按钮选择存储配置并设置远程路径</div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -103,14 +104,7 @@
                                         <div class="form-text">要备份的文件或目录的完整路径</div>
                                     </div>
                                 </div>
-                                <div class="col-md-6">
-                                    <div class="mb-3">
-                                        <label for="remote_path" class="form-label">远程路径 *</label>
-                                        <input type="text" class="form-control" id="remote_path" name="remote_path" 
-                                               value="{{ task.remote_path }}" required placeholder="backups/documents">
-                                        <div class="form-text">在云存储中的保存路径</div>
-                                    </div>
-                                </div>
+
                             </div>
                         </div>
 
@@ -347,6 +341,53 @@
     </div>
 </div>
 
+<!-- 存储配置选择弹窗 -->
+<div class="modal fade" id="storageConfigModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-cloud me-2"></i>选择存储配置
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-text mb-3">选择一个或多个存储位置，并为每个位置设置远程路径</div>
+                <div class="storage-config-selection">
+                    {% for config in storage_configs %}
+                    <div class="storage-config-option mb-3 p-3 border rounded" data-config-id="{{ config.id }}">
+                        <div class="form-check">
+                            <input class="form-check-input storage-modal-checkbox" type="checkbox"
+                                   id="modal_storage_config_{{ config.id }}"
+                                   value="{{ config.id }}"
+                                   onchange="toggleModalStorageConfig({{ config.id }})">
+                            <label class="form-check-label fw-medium d-flex align-items-center" for="modal_storage_config_{{ config.id }}">
+                                <i class="bi bi-cloud me-2"></i>
+                                <div>
+                                    <div>{{ config.name }}</div>
+                                    <small class="text-muted">{{ config.storage_type }}</small>
+                                </div>
+                            </label>
+                        </div>
+                        <div class="storage-modal-path mt-3" id="modal_path_container_{{ config.id }}" style="display: none;">
+                            <label for="modal_remote_path_{{ config.id }}" class="form-label">远程路径</label>
+                            <input type="text" class="form-control"
+                                   id="modal_remote_path_{{ config.id }}"
+                                   placeholder="例如：backup/documents">
+                            <div class="form-text">在此存储位置的备份路径</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="confirmStorageSelection()">确认选择</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- 目录浏览器模态框 -->
 <div class="modal fade" id="directoryBrowserModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
@@ -413,12 +454,152 @@
 </div>
 
 <script>
+// 存储配置选择处理
+let selectedStorageConfigs = new Map(); // 存储选中的配置和路径
+
+function openStorageConfigModal() {
+    // 显示弹窗
+    const modal = new bootstrap.Modal(document.getElementById('storageConfigModal'));
+    modal.show();
+
+    // 恢复之前的选择状态
+    selectedStorageConfigs.forEach((remotePath, configId) => {
+        const checkbox = document.getElementById(`modal_storage_config_${configId}`);
+        const pathInput = document.getElementById(`modal_remote_path_${configId}`);
+        const pathContainer = document.getElementById(`modal_path_container_${configId}`);
+
+        if (checkbox) {
+            checkbox.checked = true;
+            pathContainer.style.display = 'block';
+            pathInput.value = remotePath;
+        }
+    });
+}
+
+function toggleModalStorageConfig(configId) {
+    const checkbox = document.getElementById(`modal_storage_config_${configId}`);
+    const pathContainer = document.getElementById(`modal_path_container_${configId}`);
+    const pathInput = document.getElementById(`modal_remote_path_${configId}`);
+
+    if (checkbox.checked) {
+        pathContainer.style.display = 'block';
+        pathInput.focus();
+    } else {
+        pathContainer.style.display = 'none';
+        pathInput.value = '';
+    }
+}
+
+function confirmStorageSelection() {
+    // 清空之前的选择
+    selectedStorageConfigs.clear();
+
+    // 获取所有选中的配置
+    const checkedBoxes = document.querySelectorAll('.storage-modal-checkbox:checked');
+
+    if (checkedBoxes.length === 0) {
+        alert('请至少选择一个存储配置');
+        return;
+    }
+
+    // 验证每个选中的配置都有远程路径
+    let allValid = true;
+    checkedBoxes.forEach(checkbox => {
+        const configId = checkbox.value;
+        const pathInput = document.getElementById(`modal_remote_path_${configId}`);
+        const remotePath = pathInput.value.trim();
+
+        if (!remotePath) {
+            allValid = false;
+            pathInput.focus();
+            return;
+        }
+
+        selectedStorageConfigs.set(configId, remotePath);
+    });
+
+    if (!allValid) {
+        alert('请为所有选中的存储配置设置远程路径');
+        return;
+    }
+
+    // 更新主界面显示
+    updateStorageConfigDisplay();
+
+    // 关闭弹窗
+    const modal = bootstrap.Modal.getInstance(document.getElementById('storageConfigModal'));
+    modal.hide();
+}
+
+function updateStorageConfigDisplay() {
+    const container = document.getElementById('selectedStorageConfigs');
+    const tagsContainer = document.getElementById('selectedStorageTags');
+
+    // 清空现有标签
+    tagsContainer.innerHTML = '';
+
+    if (selectedStorageConfigs.size === 0) {
+        container.style.display = 'none';
+        return;
+    }
+
+    // 显示容器
+    container.style.display = 'block';
+
+    // 为每个选中的配置创建标签
+    selectedStorageConfigs.forEach((remotePath, configId) => {
+        const configOption = document.querySelector(`[data-config-id="${configId}"]`);
+        const configName = configOption.querySelector('label div div').textContent;
+        const configType = configOption.querySelector('label div small').textContent;
+
+        const tag = document.createElement('div');
+        tag.className = 'badge bg-primary d-flex align-items-center';
+        tag.innerHTML = `
+            <div class="me-2">
+                <div class="fw-medium">${configName}</div>
+                <small>${remotePath}</small>
+            </div>
+            <button type="button" class="btn-close btn-close-white btn-sm" onclick="removeStorageConfig('${configId}')"></button>
+        `;
+
+        tagsContainer.appendChild(tag);
+    });
+}
+
+function removeStorageConfig(configId) {
+    selectedStorageConfigs.delete(configId);
+    updateStorageConfigDisplay();
+}
+
+// 将选中的存储配置数据添加到表单中
+function addStorageConfigsToForm() {
+    // 清除之前添加的隐藏字段
+    const existingFields = document.querySelectorAll('input[name^="storage_config_"], input[name^="remote_path_"]');
+    existingFields.forEach(field => field.remove());
+
+    // 为每个选中的存储配置添加隐藏字段
+    const form = document.querySelector('form');
+    selectedStorageConfigs.forEach((remotePath, configId) => {
+        // 添加存储配置ID
+        const configInput = document.createElement('input');
+        configInput.type = 'hidden';
+        configInput.name = `storage_config_${configId}`;
+        configInput.value = configId;
+        form.appendChild(configInput);
+
+        // 添加远程路径
+        const pathInput = document.createElement('input');
+        pathInput.type = 'hidden';
+        pathInput.name = `remote_path_${configId}`;
+        pathInput.value = remotePath;
+        form.appendChild(pathInput);
+    });
+}
+
 // 表单验证函数
 function validateForm() {
     const name = document.getElementById('task_name').value.trim();
     const sourcePath = document.getElementById('source_path').value.trim();
-    const remotePath = document.getElementById('remote_path').value.trim();
-    const storageConfigId = document.getElementById('storage_config_id').value;
 
     if (!name) {
         alert('请输入任务名称');
@@ -430,15 +611,14 @@ function validateForm() {
         return false;
     }
 
-    if (!remotePath) {
-        alert('请输入远程路径');
+    // 验证存储配置选择
+    if (selectedStorageConfigs.size === 0) {
+        alert('请至少选择一个存储配置');
         return false;
     }
 
-    if (!storageConfigId) {
-        alert('请选择存储配置');
-        return false;
-    }
+    // 在表单提交前，将选中的存储配置数据添加到表单中
+    addStorageConfigsToForm();
 
     return true;
 }
@@ -613,7 +793,25 @@ document.addEventListener('DOMContentLoaded', function() {
     toggleEncryption();
     // 初始化调度设置
     initializeScheduleSettings();
+    // 初始化存储配置
+    initializeStorageConfigs();
 });
+
+// 初始化存储配置
+function initializeStorageConfigs() {
+    // 加载现有的存储配置
+    {% if task.task_storage_configs %}
+        {% for task_storage_config in task.task_storage_configs %}
+            selectedStorageConfigs.set('{{ task_storage_config.storage_config_id }}', '{{ task_storage_config.remote_path }}');
+        {% endfor %}
+    {% elif task.storage_config_id and task.remote_path %}
+        // 向后兼容：加载旧的单存储配置
+        selectedStorageConfigs.set('{{ task.storage_config_id }}', '{{ task.remote_path }}');
+    {% endif %}
+
+    // 更新显示
+    updateStorageConfigDisplay();
+}
 
 function handleScheduleTypeChange() {
     const selectedType = document.querySelector('input[name="schedule_type"]:checked')?.value;
@@ -784,6 +982,33 @@ function handleManualCronChange() {
 .directory-item i {
     margin-right: 0.5rem;
     width: 16px;
+}
+
+/* 存储配置标签样式 */
+.selected-storage-configs .badge {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    max-width: 300px;
+}
+
+.selected-storage-configs .badge .fw-medium {
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+}
+
+.selected-storage-configs .badge small {
+    font-size: 0.75rem;
+    opacity: 0.9;
+}
+
+.storage-config-option {
+    transition: all 0.3s ease;
+}
+
+.storage-config-option:hover {
+    background-color: #f8f9fa;
+    border-color: #dee2e6;
 }
 </style>
 {% endblock %}

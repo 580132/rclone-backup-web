@@ -13,35 +13,76 @@ class ConfigService:
     def __init__(self):
         self.rclone_service = RcloneService()
         self.logger = logging.getLogger(__name__)
+
+    def process_form_data(self, storage_type: str, form_data: dict) -> Tuple[bool, str, Optional[dict]]:
+        """处理前端表单数据"""
+        try:
+            from .storage_types import StorageTypeRegistry
+
+            # 获取存储类型处理器
+            storage_type_handler = StorageTypeRegistry.get_type(storage_type)
+            if not storage_type_handler:
+                return False, f"不支持的存储类型: {storage_type}", None
+
+            # 处理表单数据
+            config_data = storage_type_handler.process_form_data(form_data)
+
+            # 验证配置数据
+            is_valid, error_msg = storage_type_handler.validate_config(config_data)
+            if not is_valid:
+                return False, error_msg, None
+
+            return True, "", config_data
+
+        except Exception as e:
+            self.logger.error(f"Failed to process form data: {e}")
+            return False, f"处理表单数据时出错: {str(e)}", None
     
-    def create_storage_config(self, name: str, storage_type: str, config_data: Dict, 
-                            description: str = None, created_by: str = None) -> Tuple[bool, str, Optional[StorageConfig]]:
+    def create_storage_config(self, name: str, storage_type: str, config_data: Dict,
+                            description: str = None, test_path: str = None, created_by: str = None) -> Tuple[bool, str, Optional[StorageConfig]]:
         """创建存储配置"""
         try:
+            from .storage_types import StorageTypeRegistry
+
             # 检查名称是否已存在
             if StorageConfig.query.filter_by(name=name).first():
                 return False, "配置名称已存在", None
-            
+
+            # 验证存储类型
+            storage_type_handler = StorageTypeRegistry.get_type(storage_type)
+            if not storage_type_handler:
+                return False, f"不支持的存储类型: {storage_type}", None
+
+            # 验证配置数据
+            is_valid, error_msg = storage_type_handler.validate_config(config_data)
+            if not is_valid:
+                return False, error_msg, None
+
             # 生成rclone配置名称
             rclone_config_name = f"backup_{name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            
+
+            # 获取rclone配置
+            rclone_config = storage_type_handler.get_rclone_config(config_data)
+
             # 创建rclone配置
-            if not self.rclone_service.create_config(rclone_config_name, storage_type, config_data):
+            if not self.rclone_service.create_config(rclone_config_name, storage_type, rclone_config):
                 return False, "创建rclone配置失败", None
-            
-            # 测试连接
-            success, message = self.rclone_service.test_connection(rclone_config_name)
-            if not success:
-                # 删除创建的配置
-                self.rclone_service.delete_config(rclone_config_name)
-                return False, f"连接测试失败: {message}", None
+
+            # 测试连接（如果支持）
+            if storage_type_handler.supports_test_connection():
+                success, message = self.rclone_service.test_connection(rclone_config_name, test_path)
+                if not success:
+                    # 删除创建的配置
+                    self.rclone_service.delete_config(rclone_config_name)
+                    return False, f"连接测试失败: {message}", None
             
             # 创建数据库记录
             storage_config = StorageConfig(
                 name=name,
                 storage_type=storage_type,
                 rclone_config_name=rclone_config_name,
-                description=description
+                description=description,
+                test_path=test_path
             )
             
             db.session.add(storage_config)
@@ -77,7 +118,7 @@ class ConfigService:
     
     def update_storage_config(self, storage_config_id: int, name: str = None,
                              config_data: Dict = None, description: str = None,
-                             created_by: str = None) -> Tuple[bool, str]:
+                             test_path: str = None, created_by: str = None) -> Tuple[bool, str]:
         """更新存储配置"""
         try:
             storage_config = StorageConfig.query.get(storage_config_id)
@@ -95,6 +136,10 @@ class ConfigService:
             if description is not None:
                 storage_config.description = description
 
+            # 更新测试路径
+            if test_path is not None:
+                storage_config.test_path = test_path
+
             # 如果有配置数据更新，则更新rclone配置文件
             if config_data:
                 # 更新rclone配置文件
@@ -104,11 +149,6 @@ class ConfigService:
                     config_data
                 ):
                     return False, "更新rclone配置失败"
-
-                # 测试连接
-                success, message = self.rclone_service.test_connection(storage_config.rclone_config_name)
-                if not success:
-                    return False, f"连接测试失败: {message}"
 
                 # 创建新的历史版本
                 latest_version = self._get_latest_version(storage_config_id)

@@ -30,7 +30,7 @@ class RcloneService:
         # 使用rclone标准配置文件名
         return os.path.join(self.config_dir, 'rclone.conf')
 
-    def _build_rclone_command(self, rclone_args: List[str], local_paths: List[str] = None) -> List[str]:
+    def _build_rclone_command(self, rclone_args: List[str]) -> List[str]:
         """构建rclone命令，根据环境选择直接调用或Docker调用"""
         if self.docker_env:
             # Docker环境：通过docker exec调用rclone容器
@@ -42,13 +42,11 @@ class RcloneService:
                 if arg == '--config':
                     processed_args.append(arg)
                 elif arg.startswith(self.config_dir):
-                    # 配置文件路径映射到容器内路径
-                    processed_args.append('/config/rclone/rclone.conf')
-                elif arg.startswith('/app/data/temp'):
-                    # 临时文件路径映射到rclone容器内路径
-                    relative_path = os.path.relpath(arg, '/app/data/temp')
-                    container_path = f'/data/temp/{relative_path}' if relative_path != '.' else '/data/temp'
-                    processed_args.append(container_path)
+                    # 配置文件路径在rclone容器中保持相同路径
+                    processed_args.append(arg)
+                elif self._is_temp_file_path(arg):
+                    # 临时文件路径在rclone容器中保持相同路径
+                    processed_args.append(arg)
                 elif arg.startswith('/host'):
                     # 宿主机路径在rclone容器中也是/host
                     processed_args.append(arg)
@@ -62,6 +60,20 @@ class RcloneService:
             cmd.extend(rclone_args)
 
         return cmd
+
+    def _is_temp_file_path(self, path: str) -> bool:
+        """判断是否为临时文件路径"""
+        # 处理绝对路径
+        if path.startswith('/app/data/temp'):
+            return True
+        # 处理相对路径
+        if path.startswith('data/temp'):
+            return True
+        # 处理当前工作目录下的相对路径
+        abs_path = os.path.abspath(path)
+        if abs_path.startswith('/app/data/temp'):
+            return True
+        return False
     
     def create_config(self, name: str, storage_type: str, config_data: Dict) -> bool:
         """创建rclone配置"""
@@ -175,12 +187,36 @@ class RcloneService:
     def _generate_config_content(self, name: str, storage_type: str, config_data: Dict) -> Optional[str]:
         """生成rclone配置内容"""
         try:
+            # 新的通用方法：直接使用storage type handler提供的rclone配置
+            # config_data应该已经是完整的rclone配置格式
+
+            # 检查是否已经是完整的rclone配置格式（包含type字段）
+            if 'type' in config_data:
+                # 直接使用提供的rclone配置数据
+                config_lines = [f"[{name}]"]
+
+                # 按特定顺序添加配置项以保持一致性
+                ordered_keys = ['type', 'provider', 'access_key_id', 'secret_access_key', 'endpoint', 'region']
+
+                # 首先添加有序的关键字段
+                for key in ordered_keys:
+                    if key in config_data:
+                        config_lines.append(f"{key} = {config_data[key]}")
+
+                # 然后添加其他字段
+                for key, value in config_data.items():
+                    if key not in ordered_keys and value is not None and str(value).strip():
+                        config_lines.append(f"{key} = {value}")
+
+                return '\n'.join(config_lines)
+
+            # 兼容旧的配置格式 - 保留原有逻辑作为后备
             if storage_type == 's3':
                 # 支持AWS S3和兼容S3的服务
                 config = f"""[{name}]
 type = s3
-access_key_id = {config_data['access_key']}
-secret_access_key = {config_data['secret_key']}
+access_key_id = {config_data.get('access_key_id', config_data.get('access_key', ''))}
+secret_access_key = {config_data.get('secret_access_key', config_data.get('secret_key', ''))}
 region = {config_data.get('region', 'us-east-1')}
 """
                 # 根据endpoint判断provider
@@ -208,8 +244,8 @@ region = {config_data.get('region', 'us-east-1')}
                 return f"""[{name}]
 type = s3
 provider = Alibaba
-access_key_id = {config_data['access_key']}
-secret_access_key = {config_data['secret_key']}
+access_key_id = {config_data.get('access_key_id', config_data.get('access_key', ''))}
+secret_access_key = {config_data.get('secret_access_key', config_data.get('secret_key', ''))}
 endpoint = {config_data['endpoint']}
 region = {config_data.get('region', 'oss-cn-hangzhou')}
 location_constraint = {config_data.get('region', 'oss-cn-hangzhou')}
@@ -217,18 +253,19 @@ location_constraint = {config_data.get('region', 'oss-cn-hangzhou')}
 
             elif storage_type == 'cloudflare_r2':
                 # Cloudflare R2专用配置
-                endpoint = config_data['endpoint']
-                # 确保endpoint包含https://前缀
-                if not endpoint.startswith('https://') and not endpoint.startswith('http://'):
-                    endpoint = f"https://{endpoint}"
+                endpoint = config_data.get('endpoint', '')
+                # 确保endpoint不包含协议前缀（新的验证逻辑已经处理了这个）
+                if endpoint.startswith('https://') or endpoint.startswith('http://'):
+                    endpoint = endpoint.replace('https://', '').replace('http://', '')
 
                 return f"""[{name}]
 type = s3
 provider = Cloudflare
-access_key_id = {config_data['access_key']}
-secret_access_key = {config_data['secret_key']}
+access_key_id = {config_data.get('access_key_id', config_data.get('access_key', ''))}
+secret_access_key = {config_data.get('secret_access_key', config_data.get('secret_key', ''))}
 endpoint = {endpoint}
 region = auto
+force_path_style = true
 """
 
             elif storage_type == 'google_drive':
@@ -295,6 +332,10 @@ user = {config_data['username']}
 pass = {config_data['password']}
 port = {config_data.get('port', 21)}
 """
+            elif storage_type == 'raw_rclone':
+                # 原始rclone配置 - 直接使用用户提供的配置
+                return self._generate_raw_rclone_config(name, config_data)
+
             else:
                 self.logger.error(f"Unsupported storage type: {storage_type}")
                 return None
@@ -302,23 +343,39 @@ port = {config_data.get('port', 21)}
             self.logger.error(f"Missing required config parameter: {e}")
             return None
 
-    def get_supported_types(self) -> List[Dict[str, str]]:
-        """获取支持的存储类型"""
-        return [
-            {'value': 's3', 'label': 'Amazon S3'},
-            {'value': 'alibaba_oss', 'label': '阿里云 OSS'},
-            {'value': 'cloudflare_r2', 'label': 'Cloudflare R2'},
-            {'value': 'google_drive', 'label': 'Google Drive'},
-            {'value': 'sftp', 'label': 'SFTP'},
-            {'value': 'ftp', 'label': 'FTP'}
-        ]
-    
-    def test_connection(self, config_name: str) -> Tuple[bool, str]:
-        """测试rclone连接"""
+    def _generate_raw_rclone_config(self, name: str, config_data: Dict) -> Optional[str]:
+        """生成原始rclone配置"""
         try:
-            config_path = self.get_config_path()
-            self.logger.info(f"Testing connection for {config_name}, config path: {config_path}")
+            # 构建配置段
+            config_lines = [f"[{name}]"]
 
+            # 添加所有配置项（除了内部字段）
+            for key, value in config_data.items():
+                if not key.startswith('_'):  # 跳过内部字段如 _raw_config
+                    config_lines.append(f"{key} = {value}")
+
+            return "\n".join(config_lines) + "\n"
+
+        except Exception as e:
+            self.logger.error(f"Failed to generate raw rclone config: {e}")
+            return None
+
+    def get_supported_types(self) -> List[Dict[str, str]]:
+        """获取支持的存储类型 - 从存储类型注册器获取"""
+        from .storage_types import StorageTypeRegistry
+        return StorageTypeRegistry.get_all_types()
+    
+    def test_connection(self, config_name: str, test_path: str = None) -> Tuple[bool, str]:
+        """测试rclone连接 - 使用真实的备份操作流程进行测试"""
+        import tempfile
+        import os
+        from datetime import datetime
+
+        temp_test_file = None
+        try:
+            self.logger.info(f"Testing connection for {config_name} with test_path: {test_path}")
+
+            config_path = self.get_config_path()
             if not os.path.exists(config_path):
                 self.logger.error(f"Config file does not exist: {config_path}")
                 return False, "配置文件不存在"
@@ -328,80 +385,185 @@ port = {config_data.get('port', 21)}
                 self.logger.error(f"Config section '{config_name}' not found in {config_path}")
                 return False, f"配置段 '{config_name}' 不存在"
 
-            # 记录配置文件内容（用于调试）
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config_content = f.read()
-                self.logger.info(f"Config file content:\n{config_content}")
-            except Exception as e:
-                self.logger.warning(f"Could not read config file for logging: {e}")
+            # 第一步：验证配置格式
+            verify_args = ['config', 'show', config_name, '--config', config_path]
+            verify_cmd = self._build_rclone_command(verify_args)
 
-            # 对于Cloudflare R2，先验证配置，然后尝试简单的连接测试
-            if config_name.find('cloudflare') != -1 or 'r2' in config_name.lower():
-                # 第一步：验证配置是否存在
-                verify_args = ['config', 'show', config_name, '--config', config_path]
-                verify_cmd = self._build_rclone_command(verify_args)
+            self.logger.info(f"Verifying config format: {' '.join(verify_cmd)}")
+            verify_result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=10)
 
-                self.logger.info(f"Verifying config exists: {' '.join(verify_cmd)}")
-                verify_result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=10)
+            if verify_result.returncode != 0:
+                self.logger.error(f"Config verification failed: {verify_result.stderr}")
+                return False, "配置格式验证失败"
 
-                if verify_result.returncode != 0:
-                    self.logger.error(f"Config verification failed: {verify_result.stderr}")
-                    return False, "配置验证失败"
+            self.logger.info(f"Config format verification successful")
 
-                self.logger.info(f"Config verification successful, config content:\n{verify_result.stdout}")
-
-                # 第二步：尝试连接测试（允许失败）
-                test_args = ['lsd', f'{config_name}:', '--config', config_path, '--timeout', '15s', '--retries', '1']
-                cmd = self._build_rclone_command(test_args)
+            # 确定测试路径
+            if test_path:
+                # 确保测试路径以 / 结尾
+                remote_test_path = test_path.rstrip('/') + '/connection-test/'
             else:
-                # 其他存储类型使用标准测试
-                test_args = ['lsd', f'{config_name}:', '--config', config_path, '--timeout', '30s', '-vv']
-                cmd = self._build_rclone_command(test_args)
+                remote_test_path = 'connection-test/'
 
-            self.logger.info(f"Executing rclone test command: {' '.join(cmd)}")
+            self.logger.info(f"Using test path: {remote_test_path}")
 
-            # 记录环境变量（如果有的话）
-            env_vars = {k: v for k, v in os.environ.items() if 'RCLONE' in k or 'AWS' in k or 'S3' in k}
-            if env_vars:
-                self.logger.info(f"Relevant environment variables: {env_vars}")
+            # 第二步：创建测试文件
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            test_filename = f"test_{timestamp}.txt"
+            test_content = f"Connection test file\nCreated: {datetime.now().isoformat()}\nConfig: {config_name}\nTest ID: {timestamp}"
 
-            self.logger.info(f"Starting rclone test process with timeout=35s")
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=35
-            )
+            # 在临时目录创建测试文件
+            temp_dir = os.path.abspath('data/temp')
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_test_file = os.path.join(temp_dir, test_filename)
 
-            self.logger.info(f"rclone test process completed with return code: {result.returncode}")
-            self.logger.info(f"rclone test stdout:\n{result.stdout}")
-            self.logger.info(f"rclone test stderr:\n{result.stderr}")
+            with open(temp_test_file, 'w', encoding='utf-8') as f:
+                f.write(test_content)
 
-            if result.returncode == 0:
-                self.logger.info(f"Connection test successful for {config_name}")
-                return True, "连接成功"
-            else:
-                error_msg = result.stderr.strip() or result.stdout.strip()
-                self.logger.error(f"Connection test failed for {config_name}: {error_msg}")
+            self.logger.info(f"Created test file: {temp_test_file}")
 
-                # 对于Cloudflare R2，如果是权限问题，仍然认为配置是有效的
-                if config_name.find('cloudflare') != -1 or 'r2' in config_name.lower():
-                    if 'AccessDenied' in error_msg or 'Access Denied' in error_msg:
-                        self.logger.info(f"Cloudflare R2 config is valid but has permission issues: {config_name}")
-                        return True, "配置有效（权限受限，请检查API Token权限）"
-                    elif 'doesn\'t support' in error_msg:
-                        self.logger.info(f"Cloudflare R2 config is valid but command not supported: {config_name}")
-                        return True, "配置有效（部分功能受限）"
+            # 第三步：测试上传
+            self.logger.info(f"Testing upload to {config_name}:{remote_test_path}")
+            upload_success, upload_message = self.upload_file(temp_test_file, remote_test_path + test_filename, config_name)
 
-                return False, f"连接失败: {error_msg}"
+            if not upload_success:
+                self.logger.error(f"Upload test failed: {upload_message}")
+                return False, f"上传测试失败: {upload_message}"
+
+            self.logger.info("Upload test successful")
+
+            # 第四步：测试列出文件
+            self.logger.info(f"Testing list files in {remote_test_path}")
+            list_success, files, list_message = self.list_files(remote_test_path, config_name)
+
+            if not list_success:
+                self.logger.warning(f"List files test failed: {list_message}")
+                # 上传成功但列出失败，仍然认为连接有效
+                return True, "连接成功（文件列表功能受限）"
+
+            # 检查上传的文件是否在列表中
+            uploaded_file_found = any(f.get('Name') == test_filename for f in files)
+            if not uploaded_file_found:
+                self.logger.warning(f"Uploaded file {test_filename} not found in file list")
+                return True, "连接成功（文件列表可能有延迟）"
+
+            self.logger.info("List files test successful")
+
+            # 第五步：测试删除
+            self.logger.info(f"Testing delete file {remote_test_path + test_filename}")
+            delete_success, delete_message = self.delete_file(remote_test_path + test_filename, config_name)
+
+            if not delete_success:
+                self.logger.warning(f"Delete test failed: {delete_message}")
+                return True, "连接成功（删除功能受限，请手动清理测试文件）"
+
+            self.logger.info("Delete test successful")
+            return True, "连接测试成功（上传、列表、删除功能均正常）"
 
         except subprocess.TimeoutExpired as e:
-            self.logger.error(f"rclone command timed out after 35 seconds for {config_name}")
-            return False, "连接超时"
+            self.logger.error(f"Connection test timed out for {config_name}")
+            return False, "连接测试超时"
         except Exception as e:
-            self.logger.error(f"Connection test error for {config_name}: {e}")
+            self.logger.error(f"Connection test error for {config_name}: {e}", exc_info=True)
+            return False, f"连接测试失败: {str(e)}"
+        finally:
+            # 清理临时文件
+            if temp_test_file and os.path.exists(temp_test_file):
+                try:
+                    os.remove(temp_test_file)
+                    self.logger.info(f"Cleaned up temp file: {temp_test_file}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to clean up temp file {temp_test_file}: {e}")
+
+    def test_backup_upload(self, config_name: str, test_path: str = None) -> Tuple[bool, str]:
+        """测试真实的备份上传流程"""
+        import tempfile
+        import shutil
+        from datetime import datetime
+
+        temp_test_file = None
+        try:
+            self.logger.info(f"Starting backup upload test for {config_name}")
+
+            # 检查配置是否存在
+            config_path = self.get_config_path()
+            if not os.path.exists(config_path):
+                return False, "配置文件不存在"
+
+            if not self._config_section_exists(config_path, config_name):
+                return False, f"配置段 '{config_name}' 不存在"
+
+            # 创建测试文件
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            test_filename = f"backup_test_{timestamp}.txt"
+            test_content = f"Backup test file created at {datetime.now().isoformat()}\nConfig: {config_name}\nTest ID: {timestamp}"
+
+            # 在临时目录创建测试文件
+            temp_dir = os.path.abspath('data/temp')
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_test_file = os.path.join(temp_dir, test_filename)
+
+            with open(temp_test_file, 'w', encoding='utf-8') as f:
+                f.write(test_content)
+
+            self.logger.info(f"Created test file: {temp_test_file}")
+
+            # 确定远程测试路径
+            if test_path:
+                remote_test_path = test_path.rstrip('/') + '/backup_tests/'
+            else:
+                remote_test_path = 'backup_tests/'
+
+            # 上传测试文件
+            self.logger.info(f"Uploading test file to {config_name}:{remote_test_path}")
+            success, message = self.upload_file(temp_test_file, remote_test_path, config_name)
+
+            if not success:
+                return False, f"上传测试失败: {message}"
+
+            # 验证文件是否上传成功（列出远程文件）
+            self.logger.info(f"Verifying uploaded file in {remote_test_path}")
+            list_success, files, list_message = self.list_files(remote_test_path, config_name)
+
+            if not list_success:
+                self.logger.warning(f"Could not verify upload by listing files: {list_message}")
+                # 即使无法列出文件，如果上传成功也认为测试通过
+                return True, "上传成功（无法验证文件列表）"
+
+            # 检查测试文件是否在列表中
+            uploaded_file_found = False
+            for file_info in files:
+                if file_info.get('Name') == test_filename:
+                    uploaded_file_found = True
+                    break
+
+            if uploaded_file_found:
+                self.logger.info(f"Test file found in remote storage: {test_filename}")
+
+                # 清理远程测试文件
+                remote_file_path = remote_test_path + test_filename
+                delete_success, delete_message = self.delete_file(remote_file_path, config_name)
+                if delete_success:
+                    self.logger.info(f"Cleaned up remote test file: {remote_file_path}")
+                else:
+                    self.logger.warning(f"Could not clean up remote test file: {delete_message}")
+
+                return True, "备份上传测试成功"
+            else:
+                self.logger.warning(f"Test file not found in remote file list")
+                return True, "上传成功（文件验证异常）"
+
+        except Exception as e:
+            self.logger.error(f"Backup upload test error for {config_name}: {e}", exc_info=True)
             return False, f"测试失败: {str(e)}"
+        finally:
+            # 清理本地测试文件
+            if temp_test_file and os.path.exists(temp_test_file):
+                try:
+                    os.remove(temp_test_file)
+                    self.logger.info(f"Cleaned up local test file: {temp_test_file}")
+                except Exception as e:
+                    self.logger.warning(f"Could not clean up local test file: {e}")
     
     def upload_file(self, local_path: str, remote_path: str, config_name: str) -> Tuple[bool, str]:
         """上传文件到远程存储"""
@@ -409,6 +571,13 @@ port = {config_data.get('port', 21)}
             config_path = self.get_config_path(config_name)
             self.logger.info(f"Upload parameters - local_path: {local_path}, remote_path: {remote_path}, config_name: {config_name}")
             self.logger.info(f"Using config file: {config_path}")
+            self.logger.info(f"Docker environment: {self.docker_env}")
+
+            # 记录路径信息
+            abs_local_path = os.path.abspath(local_path)
+            self.logger.info(f"Absolute local path: {abs_local_path}")
+            self.logger.info(f"Local path exists: {os.path.exists(local_path)}")
+            self.logger.info(f"Absolute local path exists: {os.path.exists(abs_local_path)}")
 
             if not os.path.exists(config_path):
                 self.logger.error(f"Config file does not exist: {config_path}")
@@ -442,9 +611,7 @@ port = {config_data.get('port', 21)}
                 '-vv'  # 增加详细输出
             ]
 
-            # 传递本地路径信息用于Docker环境的路径映射
-            local_paths = [os.path.dirname(local_path)] if self.docker_env else None
-            cmd = self._build_rclone_command(copy_args, local_paths)
+            cmd = self._build_rclone_command(copy_args)
 
             self.logger.info(f"Starting upload: {local_path} -> {config_name}:{remote_path}")
             self.logger.info(f"Executing rclone command: {' '.join(cmd)}")
@@ -510,9 +677,7 @@ port = {config_data.get('port', 21)}
                 '-vv'  # 增加详细输出
             ]
 
-            # 传递本地路径信息用于Docker环境的路径映射
-            local_paths = [os.path.dirname(local_path)] if self.docker_env else None
-            cmd = self._build_rclone_command(copy_args, local_paths)
+            cmd = self._build_rclone_command(copy_args)
 
             self.logger.info(f"Starting download: {config_name}:{remote_path} -> {local_path}")
             self.logger.info(f"Executing rclone command: {' '.join(cmd)}")

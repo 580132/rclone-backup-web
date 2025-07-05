@@ -25,18 +25,35 @@ class BackupService:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.rclone_service = RcloneService()
-        self.temp_dir = 'data/temp'
-        
+        self.temp_dir = os.path.abspath('data/temp')  # 使用绝对路径
+
         # 确保临时目录存在
         os.makedirs(self.temp_dir, exist_ok=True)
     
     def create_backup_task(self, task_data: Dict) -> Tuple[bool, str, Optional[BackupTask]]:
         """创建备份任务"""
         try:
-            # 验证存储配置是否存在
-            storage_config = StorageConfig.query.get(task_data.get('storage_config_id'))
-            if not storage_config:
-                return False, "存储配置不存在", None
+            # 验证存储配置是否存在（支持多个存储配置）
+            storage_configs_data = task_data.get('storage_configs', [])
+            if not storage_configs_data:
+                # 向后兼容：检查单个存储配置
+                storage_config_id = task_data.get('storage_config_id')
+                if storage_config_id:
+                    storage_config = StorageConfig.query.get(storage_config_id)
+                    if not storage_config:
+                        return False, "存储配置不存在", None
+                    storage_configs_data = [{
+                        'storage_config_id': storage_config_id,
+                        'remote_path': task_data.get('remote_path', '')
+                    }]
+                else:
+                    return False, "请至少选择一个存储配置", None
+
+            # 验证所有存储配置是否存在
+            for config_data in storage_configs_data:
+                storage_config = StorageConfig.query.get(config_data.get('storage_config_id'))
+                if not storage_config:
+                    return False, f"存储配置ID {config_data.get('storage_config_id')} 不存在", None
             
             # 验证源路径是否存在
             source_path = task_data.get('source_path')
@@ -55,13 +72,14 @@ class BackupService:
             if task_data.get('encryption_enabled') and task_data.get('encryption_password'):
                 encryption_password = self._encrypt_password(task_data.get('encryption_password'))
             
-            # 创建备份任务
+            # 创建备份任务（不再直接关联单个存储配置）
             task = BackupTask(
                 name=task_data.get('name'),
                 description=task_data.get('description', ''),
                 source_path=source_path,
-                storage_config_id=task_data.get('storage_config_id'),
-                remote_path=task_data.get('remote_path'),
+                # 保留向后兼容字段
+                storage_config_id=storage_configs_data[0].get('storage_config_id') if len(storage_configs_data) == 1 else None,
+                remote_path=storage_configs_data[0].get('remote_path') if len(storage_configs_data) == 1 else None,
                 cron_expression=task_data.get('cron_expression', ''),
                 compression_enabled=task_data.get('compression_enabled', True),
                 compression_type=task_data.get('compression_type', 'tar.gz'),
@@ -76,9 +94,21 @@ class BackupService:
                 task.next_run_at = self._calculate_next_run_time(task.cron_expression)
             
             db.session.add(task)
+            db.session.flush()  # 获取任务ID
+
+            # 创建存储配置关联
+            from models import BackupTaskStorageConfig
+            for config_data in storage_configs_data:
+                task_storage_config = BackupTaskStorageConfig(
+                    backup_task_id=task.id,
+                    storage_config_id=config_data.get('storage_config_id'),
+                    remote_path=config_data.get('remote_path', '')
+                )
+                db.session.add(task_storage_config)
+
             db.session.commit()
-            
-            self.logger.info(f"Created backup task: {task.name}")
+
+            self.logger.info(f"Created backup task: {task.name} with {len(storage_configs_data)} storage configs")
             return True, "备份任务创建成功", task
             
         except Exception as e:
@@ -105,52 +135,85 @@ class BackupService:
             if running_log:
                 return False, "备份任务正在运行中"
             
-            # 创建备份日志
-            log = BackupLog(
-                task_id=task_id,
-                status='running',
-                start_time=self._get_local_time()
-            )
-            db.session.add(log)
-            db.session.commit()
-            
-            try:
-                # 执行备份
-                success, message = self._execute_backup(task, log)
-                
-                # 更新日志状态
-                log.status = 'success' if success else 'failed'
-                log.end_time = self._get_local_time()
-                if not success:
-                    log.error_message = message
+            # 获取任务的存储配置
+            storage_configs = []
+            if task.task_storage_configs:
+                # 使用新的多存储配置
+                for task_storage_config in task.task_storage_configs:
+                    storage_configs.append({
+                        'storage_config': task_storage_config.storage_config,
+                        'remote_path': task_storage_config.remote_path
+                    })
+            elif task.storage_config_id:
+                # 向后兼容：使用旧的单存储配置
+                storage_configs.append({
+                    'storage_config': task.storage_config,
+                    'remote_path': task.remote_path
+                })
 
-                # 更新任务的最后运行时间
-                task.last_run_at = self._get_local_time()
-                if not manual and task.cron_expression:
-                    task.next_run_at = self._calculate_next_run_time(task.cron_expression)
-                
-                db.session.commit()
-                
-                self.logger.info(f"Backup task {task.name} completed: {message}")
-                return success, message
-                
-            except Exception as e:
-                # 更新日志为失败状态
-                log.status = 'failed'
-                log.end_time = self._get_local_time()
-                log.error_message = str(e)
-                db.session.commit()
-                
-                self.logger.error(f"Backup task {task.name} failed: {e}")
-                return False, f"备份执行失败: {str(e)}"
-                
+            if not storage_configs:
+                return False, "任务没有配置存储位置"
+
+            # 执行备份到所有存储配置
+            all_success = True
+            all_messages = []
+
+            for config_info in storage_configs:
+                storage_config = config_info['storage_config']
+                remote_path = config_info['remote_path']
+
+                # 为每个存储配置创建单独的备份日志
+                log = BackupLog(
+                    task_id=task_id,
+                    status='running',
+                    start_time=self._get_local_time(),
+                    storage_config_id=storage_config.id,
+                    remote_path=remote_path
+                )
+                db.session.add(log)
+                db.session.flush()
+
+                try:
+                    # 执行备份到当前存储配置
+                    success, message = self._execute_backup_to_storage(task, log, storage_config, remote_path)
+
+                    # 更新日志状态
+                    log.status = 'success' if success else 'failed'
+                    log.end_time = self._get_local_time()
+                    if not success:
+                        log.error_message = message
+                        all_success = False
+
+                    all_messages.append(f"{storage_config.name}: {message}")
+                    self.logger.info(f"Backup to {storage_config.name}: {message}")
+
+                except Exception as e:
+                    # 更新日志为失败状态
+                    log.status = 'failed'
+                    log.end_time = self._get_local_time()
+                    log.error_message = str(e)
+                    all_success = False
+                    all_messages.append(f"{storage_config.name}: 备份失败 - {str(e)}")
+                    self.logger.error(f"Backup to {storage_config.name} failed: {e}")
+
+            # 更新任务的最后运行时间
+            task.last_run_at = self._get_local_time()
+            if not manual and task.cron_expression:
+                task.next_run_at = self._calculate_next_run_time(task.cron_expression)
+
+            db.session.commit()
+
+            # 返回总体结果
+            final_message = "; ".join(all_messages)
+            self.logger.info(f"Backup task {task.name} completed. Overall success: {all_success}")
+            return all_success, final_message
         except Exception as e:
             db.session.rollback()
             self.logger.error(f"Failed to run backup task: {e}")
             return False, f"启动备份任务失败: {str(e)}"
     
-    def _execute_backup(self, task: BackupTask, log: BackupLog) -> Tuple[bool, str]:
-        """执行具体的备份操作"""
+    def _execute_backup_to_storage(self, task: BackupTask, log: BackupLog, storage_config, remote_path: str) -> Tuple[bool, str]:
+        """执行具体的备份操作到指定存储配置"""
         temp_file = None
         try:
             # 获取实际的源路径
@@ -210,18 +273,18 @@ class BackupService:
             
             # 上传到远程存储
             # 使用目录路径，让rclone自动处理文件名（与脚本行为一致）
-            remote_dir_path = task.remote_path.rstrip('/')  # 确保路径格式正确
+            remote_dir_path = remote_path.rstrip('/')  # 确保路径格式正确
             success, message = self.rclone_service.upload_file(
                 temp_file,
                 remote_dir_path + '/',  # 以/结尾表示目录
-                task.storage_config.rclone_config_name
+                storage_config.rclone_config_name
             )
-            
+
             if not success:
                 return False, f"上传失败: {message}"
 
             # 清理旧备份文件（基于远程存储中的实际文件）
-            self._cleanup_old_backups_from_remote(task)
+            self._cleanup_old_backups_from_remote_storage(task, storage_config, remote_path)
 
             return True, "备份完成"
             
@@ -366,17 +429,12 @@ class BackupService:
             # 如果获取本地时间失败，使用系统时间
             return datetime.now()
     
-    def update_backup_task(self, task_id: int, task_data: Dict) -> Tuple[bool, str, Optional[BackupTask]]:
+    def update_backup_task(self, task_id: int, task_data: Dict, storage_configs_data: List[Dict] = None) -> Tuple[bool, str, Optional[BackupTask]]:
         """更新备份任务"""
         try:
             task = BackupTask.query.get(task_id)
             if not task:
                 return False, "任务不存在", None
-
-            # 验证存储配置是否存在
-            storage_config = StorageConfig.query.get(task_data.get('storage_config_id'))
-            if not storage_config:
-                return False, "存储配置不存在", None
 
             # 验证源路径是否存在
             source_path = task_data.get('source_path')
@@ -393,6 +451,23 @@ class BackupService:
             if existing_task:
                 return False, "任务名称已存在", None
 
+            # 处理存储配置数据
+            if storage_configs_data:
+                # 新的多存储配置模式
+                if not storage_configs_data:
+                    return False, "至少需要选择一个存储配置", None
+
+                # 验证所有存储配置是否存在
+                for config_data in storage_configs_data:
+                    storage_config = StorageConfig.query.get(config_data.get('storage_config_id'))
+                    if not storage_config:
+                        return False, f"存储配置不存在: {config_data.get('storage_config_id')}", None
+            else:
+                # 向后兼容：旧的单存储配置模式
+                storage_config = StorageConfig.query.get(task_data.get('storage_config_id'))
+                if not storage_config:
+                    return False, "存储配置不存在", None
+
             # 处理加密密码
             encryption_password = task.encryption_password  # 保持原有密码
             if task_data.get('encryption_enabled') and task_data.get('encryption_password'):
@@ -407,8 +482,6 @@ class BackupService:
             task.name = task_data.get('name')
             task.description = task_data.get('description', '')
             task.source_path = source_path
-            task.storage_config_id = task_data.get('storage_config_id')
-            task.remote_path = task_data.get('remote_path')
             task.cron_expression = task_data.get('cron_expression', '')
             task.compression_enabled = task_data.get('compression_enabled', True)
             task.compression_type = task_data.get('compression_type', 'tar.gz')
@@ -417,6 +490,31 @@ class BackupService:
             task.retention_count = task_data.get('retention_count', 10)
             task.is_active = task_data.get('is_active', True)
             task.updated_at = self._get_local_time()
+
+            # 处理存储配置关联
+            if storage_configs_data:
+                # 新的多存储配置模式：删除旧的关联，创建新的关联
+                from models import BackupTaskStorageConfig
+
+                # 删除现有的存储配置关联
+                BackupTaskStorageConfig.query.filter_by(backup_task_id=task.id).delete()
+
+                # 创建新的存储配置关联
+                for config_data in storage_configs_data:
+                    task_storage_config = BackupTaskStorageConfig(
+                        backup_task_id=task.id,
+                        storage_config_id=config_data.get('storage_config_id'),
+                        remote_path=config_data.get('remote_path', '')
+                    )
+                    db.session.add(task_storage_config)
+
+                # 清空旧的单存储配置字段
+                task.storage_config_id = None
+                task.remote_path = None
+            else:
+                # 向后兼容：旧的单存储配置模式
+                task.storage_config_id = task_data.get('storage_config_id')
+                task.remote_path = task_data.get('remote_path')
 
             # 重新计算下次运行时间
             if task.cron_expression:
@@ -543,8 +641,74 @@ class BackupService:
         except Exception as e:
             self.logger.error(f"Failed to cleanup old backups for task {task.id}: {e}")
 
+    def _cleanup_old_backups_from_remote_storage(self, task: BackupTask, storage_config, remote_path: str):
+        """基于远程存储中的实际文件清理旧备份，支持指定存储配置"""
+        try:
+            self.logger.info(f"Starting cleanup of old backups for task {task.name} in {storage_config.name}")
+
+            # 获取远程目录中的文件列表
+            remote_dir_path = remote_path.rstrip('/')
+            success, files, message = self.rclone_service.list_files(
+                remote_dir_path,
+                storage_config.rclone_config_name
+            )
+
+            if not success:
+                self.logger.error(f"Failed to list remote files in {storage_config.name}: {message}")
+                return
+
+            # 过滤出属于当前任务的备份文件
+            task_files = []
+            for file_info in files:
+                file_name = file_info.get('Name', '')
+                # 匹配文件名格式：task_name_YYYYMMDD_HHMMSS.*
+                if file_name.startswith(f"{task.name}_") and len(file_name.split('_')) >= 3:
+                    try:
+                        # 提取时间戳部分验证格式
+                        parts = file_name.split('_')
+                        if len(parts) >= 3:
+                            date_part = parts[-2]  # YYYYMMDD
+                            time_part = parts[-1].split('.')[0]  # HHMMSS
+                            if len(date_part) == 8 and len(time_part) == 6:
+                                task_files.append(file_info)
+                    except:
+                        continue
+
+            self.logger.info(f"Found {len(task_files)} backup files for task {task.name} in {storage_config.name}")
+
+            # 如果文件数量超过保留数量，删除最旧的文件
+            if len(task_files) > task.retention_count:
+                # 按文件名排序（文件名包含时间戳，所以可以直接排序）
+                task_files.sort(key=lambda x: x.get('Name', ''))
+
+                # 计算需要删除的文件数量
+                files_to_delete = task_files[:-task.retention_count]  # 保留最新的N个
+
+                self.logger.info(f"Need to delete {len(files_to_delete)} old backup files in {storage_config.name}")
+
+                for file_info in files_to_delete:
+                    file_name = file_info.get('Name', '')
+                    remote_file_path = f"{remote_dir_path}/{file_name}"
+
+                    success, message = self._delete_remote_file(
+                        remote_file_path,
+                        storage_config.rclone_config_name
+                    )
+
+                    if success:
+                        self.logger.info(f"Deleted old backup file: {file_name} from {storage_config.name}")
+                    else:
+                        self.logger.warning(f"Failed to delete old backup file {file_name} from {storage_config.name}: {message}")
+
+                self.logger.info(f"Cleanup completed for task {task.name} in {storage_config.name}")
+            else:
+                self.logger.info(f"No cleanup needed for task {task.name} in {storage_config.name} (only {len(task_files)} files, retention: {task.retention_count})")
+
+        except Exception as e:
+            self.logger.error(f"Failed to cleanup old backups from {storage_config.name} for task {task.id}: {e}")
+
     def _cleanup_old_backups_from_remote(self, task: BackupTask):
-        """基于远程存储中的实际文件清理旧备份，类似脚本逻辑"""
+        """基于远程存储中的实际文件清理旧备份，类似脚本逻辑（向后兼容）"""
         try:
             self.logger.info(f"Starting cleanup of old backups for task {task.name}")
 

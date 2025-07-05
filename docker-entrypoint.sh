@@ -37,6 +37,10 @@ echo "✓ 目录结构检查完成"
 chmod -R 755 /app/data
 chmod -R 755 /app/logs
 
+# 确保数据库文件可以创建
+touch /app/data/database.db 2>/dev/null || echo "⚠ 无法预创建数据库文件，将在运行时创建"
+chmod 644 /app/data/database.db 2>/dev/null || echo "⚠ 数据库文件权限设置跳过"
+
 echo "✓ 权限设置完成"
 
 # 启动应用

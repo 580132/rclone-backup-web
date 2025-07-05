@@ -32,7 +32,7 @@ services:
       - FLASK_ENV=production
       - DOCKER_ENV=true
       - RCLONE_CONFIG_DIR=/app/data/rclone_configs
-      - DATABASE_URL=sqlite:///data/database.db
+      - DATABASE_URL=sqlite:////app/data/database.db
       - SECRET_KEY=your-secret-key-change-this
     restart: unless-stopped
     networks:
@@ -55,8 +55,8 @@ services:
       - RCLONE_CONFIG=/config/rclone/rclone.conf
     networks:
       - backup-network
-    # 保持容器运行
-    command: ["sleep", "infinity"]
+    # 保持容器运行 - 使用rclone rcd命令启动RPC守护进程
+    command: ["rcd", "--rc-addr=0.0.0.0:5572", "--rc-no-auth"]
     restart: unless-stopped
 
 networks:

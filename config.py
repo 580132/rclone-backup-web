@@ -5,8 +5,13 @@ class Config:
     # Flask配置
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'rclone-backup-secret-key-2024'
 
-    # 数据库配置 - 使用相对路径
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///database.db'
+    # 数据库配置 - 根据环境调整路径
+    if os.environ.get('DATABASE_URL'):
+        SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
+    else:
+        # 确保数据库文件在data目录中
+        db_path = os.path.join('data', 'database.db')
+        SQLALCHEMY_DATABASE_URI = f'sqlite:///{db_path}'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # 会话配置

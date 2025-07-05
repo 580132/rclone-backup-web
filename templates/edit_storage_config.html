@@ -42,6 +42,11 @@
             </div>
             <div class="col-lg-4 col-md-5">
                 <div class="page-actions">
+                    <button type="button" class="btn btn-outline-primary me-2"
+                            onclick="testBackupUpload({{ config.id }})" title="测试备份上传">
+                        <i class="bi bi-cloud-upload me-1"></i>
+                        <span>测试备份</span>
+                    </button>
                     <a href="{{ url_for('storage_configs') }}" class="btn btn-outline-secondary me-2">
                         <i class="bi bi-arrow-left me-1"></i>
                         <span>返回列表</span>
@@ -84,10 +89,22 @@
                             </div>
                         </div>
                     </div>
-                    <div class="mb-3">
-                        <label for="description" class="form-label">描述</label>
-                        <textarea class="form-control" id="description" name="description" rows="3"
-                                  placeholder="可选，描述此配置的用途">{{ config.description or '' }}</textarea>
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="mb-3">
+                                <label for="description" class="form-label">描述</label>
+                                <textarea class="form-control" id="description" name="description" rows="3"
+                                          placeholder="可选，描述此配置的用途">{{ config.description or '' }}</textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="test_path" class="form-label">测试路径</label>
+                                <input type="text" class="form-control" id="test_path" name="test_path"
+                                       value="{{ config.test_path or '' }}" placeholder="例如：/backup-tests">
+                                <div class="form-text">用于测试备份上传的远程路径</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -439,9 +456,6 @@
                             </a>
                         </div>
                         <div>
-                            <button type="button" class="btn btn-outline-info me-2" onclick="testConnection()">
-                                <i class="bi bi-wifi me-1"></i>测试连接
-                            </button>
                             <button type="submit" class="btn btn-gradient">
                                 <i class="bi bi-check-circle me-1"></i>保存更改
                             </button>
@@ -459,7 +473,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">
-                    <i class="bi bi-wifi"></i> 连接测试结果
+                    <i class="bi bi-cloud-upload"></i> 备份测试结果
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
@@ -476,35 +490,37 @@
 
 {% block extra_js %}
 <script>
-function testConnection() {
+
+
+function testBackupUpload(configId) {
     const button = event.target;
     const originalText = button.innerHTML;
-    
+
     // 显示加载状态
     button.innerHTML = '<i class="bi bi-hourglass-split"></i> 测试中...';
     button.disabled = true;
-    
-    fetch(`/storage-configs/{{ config.id }}/test`)
+
+    fetch(`/storage-configs/${configId}/test-backup`)
         .then(response => response.json())
         .then(data => {
             const resultDiv = document.getElementById('testResult');
-            
+
             if (data.success) {
                 resultDiv.innerHTML = `
                     <div class="alert alert-success">
-                        <i class="bi bi-check-circle"></i> 连接成功！
+                        <i class="bi bi-check-circle"></i> 备份测试成功！
                         <br><small>${data.message}</small>
                     </div>
                 `;
             } else {
                 resultDiv.innerHTML = `
                     <div class="alert alert-danger">
-                        <i class="bi bi-x-circle"></i> 连接失败
+                        <i class="bi bi-x-circle"></i> 备份测试失败
                         <br><small>${data.message}</small>
                     </div>
                 `;
             }
-            
+
             new bootstrap.Modal(document.getElementById('testResultModal')).show();
         })
         .catch(error => {
