@@ -98,13 +98,14 @@ class RcloneService:
                 return False
 
             self.logger.info(f"Generated config content (length: {len(config_content)} chars)")
-            # 记录配置内容的掩码版本
-            masked_content = config_content
-            for key, value in config_data.items():
-                if any(sensitive in key.lower() for sensitive in ['password', 'secret', 'key', 'token']):
-                    if str(value) in masked_content:
-                        masked_content = masked_content.replace(str(value), f"***{str(value)[-4:] if len(str(value)) > 4 else '***'}")
-            self.logger.info(f"Generated config content (masked):\n{masked_content}")
+            # 记录配置内容的掩码版本（仅在调试模式下）
+            if self.logger.isEnabledFor(logging.DEBUG):
+                masked_content = config_content
+                for key, value in config_data.items():
+                    if any(sensitive in key.lower() for sensitive in ['password', 'secret', 'key', 'token']):
+                        if str(value) in masked_content:
+                            masked_content = masked_content.replace(str(value), f"***{str(value)[-4:] if len(str(value)) > 4 else '***'}")
+                self.logger.debug(f"Generated config content (masked):\n{masked_content}")
 
             # 读取现有配置文件
             existing_config = ""
@@ -591,13 +592,14 @@ port = {config_data.get('port', 21)}
             file_size = os.path.getsize(local_path)
             self.logger.info(f"Local file size: {file_size} bytes ({file_size / 1024 / 1024:.2f} MB)")
 
-            # 记录配置文件内容（用于调试）
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config_content = f.read()
-                self.logger.info(f"Current rclone config file content:\n{config_content}")
-            except Exception as e:
-                self.logger.warning(f"Could not read config file for logging: {e}")
+            # 记录配置文件内容（仅在调试模式下）
+            if self.logger.isEnabledFor(logging.DEBUG):
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config_content = f.read()
+                    self.logger.debug(f"Current rclone config file content:\n{config_content}")
+                except Exception as e:
+                    self.logger.warning(f"Could not read config file for logging: {e}")
 
             # 构建rclone copy命令参数
             copy_args = [

@@ -678,16 +678,17 @@ def create_app(config_name='default'):
 
             success, message = backup_service.run_backup_task(task_id, manual=True)
 
-            if success:
-                flash(f'备份任务已开始执行: {message}', 'success')
-            else:
-                flash(f'启动备份任务失败: {message}', 'error')
+            return jsonify({
+                'success': success,
+                'message': message
+            })
 
         except Exception as e:
             app.logger.error(f"Failed to run backup task: {e}")
-            flash('运行备份任务时出错', 'error')
-
-        return redirect(url_for('backup_tasks'))
+            return jsonify({
+                'success': False,
+                'message': f'运行备份任务时出错: {str(e)}'
+            }), 500
 
     @app.route('/backup-tasks/<int:task_id>/delete', methods=['POST'])
     @login_required
@@ -825,15 +826,35 @@ def create_app(config_name='default'):
             if not task:
                 return jsonify({'error': '任务不存在'}), 404
 
+            # 获取正在运行的日志
+            running_logs = BackupLog.query.filter_by(
+                task_id=task_id,
+                status='running'
+            ).order_by(BackupLog.start_time.desc()).all()
+
+            # 获取最新的日志
             latest_log = task.latest_log
+
             status_info = {
                 'task_id': task.id,
                 'name': task.name,
                 'is_active': task.is_active,
                 'last_run_at': task.last_run_at.isoformat() if task.last_run_at else None,
                 'next_run_at': task.next_run_at.isoformat() if task.next_run_at else None,
+                'is_running': len(running_logs) > 0,
+                'running_logs': [],
                 'latest_log': None
             }
+
+            # 添加正在运行的日志信息
+            for log in running_logs:
+                status_info['running_logs'].append({
+                    'id': log.id,
+                    'status': log.status,
+                    'start_time': log.start_time.isoformat(),
+                    'storage_config_name': log.storage_config.name if log.storage_config else 'Unknown',
+                    'remote_path': log.remote_path
+                })
 
             if latest_log:
                 status_info['latest_log'] = {
@@ -849,6 +870,39 @@ def create_app(config_name='default'):
         except Exception as e:
             app.logger.error(f"Failed to get task status: {e}")
             return jsonify({'error': '获取任务状态失败'}), 500
+
+    @app.route('/api/backup-logs/status', methods=['POST'])
+    @login_required
+    def get_backup_logs_status():
+        """批量获取备份日志状态"""
+        try:
+            data = request.get_json()
+            log_ids = data.get('log_ids', [])
+
+            if not log_ids:
+                return jsonify({'success': False, 'message': '未提供日志ID'}), 400
+
+            # 查询指定的日志
+            logs = BackupLog.query.filter(BackupLog.id.in_(log_ids)).all()
+
+            logs_info = []
+            for log in logs:
+                logs_info.append({
+                    'id': log.id,
+                    'status': log.status,
+                    'start_time': log.start_time.isoformat(),
+                    'end_time': log.end_time.isoformat() if log.end_time else None,
+                    'error_message': log.error_message
+                })
+
+            return jsonify({
+                'success': True,
+                'logs': logs_info
+            })
+
+        except Exception as e:
+            app.logger.error(f"Failed to get logs status: {e}")
+            return jsonify({'success': False, 'message': '获取日志状态失败'}), 500
 
     # 错误处理
     @app.errorhandler(404)
@@ -1130,7 +1184,7 @@ def create_app(config_name='default'):
                 'export_info': {
                     'timestamp': datetime.now().isoformat(),
                     'exported_by': session['username'],
-                    'version': '2.0',  # 版本2.0支持加密
+                    'version': '1.0',
                     'encrypted': True,
                     'encryption_note': '此文件包含加密的敏感数据，导入时需要提供正确的解密密码'
                 },
@@ -1617,6 +1671,18 @@ def init_database(app):
                     print("默认管理员用户已存在")
             except Exception as e:
                 print(f"创建默认用户时出错: {e}")
+
+            # 运行数据验证和修复
+            try:
+                print("开始数据验证和修复...")
+                from services.data_validation_service import data_validation_service
+                success, message = data_validation_service.validate_and_repair_data()
+                if success:
+                    print(f"✓ {message}")
+                else:
+                    print(f"⚠ {message}")
+            except Exception as e:
+                print(f"数据验证时出错: {e}")
 
         except Exception as e:
             print(f"数据库初始化失败: {e}")

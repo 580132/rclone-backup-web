@@ -117,100 +117,142 @@ class BackupService:
             return False, f"创建备份任务失败: {str(e)}", None
     
     def run_backup_task(self, task_id: int, manual: bool = False) -> Tuple[bool, str]:
-        """执行备份任务"""
+        """启动备份任务（异步执行）"""
         try:
             task = BackupTask.query.get(task_id)
             if not task:
                 return False, "备份任务不存在"
-            
+
             if not task.is_active:
                 return False, "备份任务已禁用"
-            
+
             # 检查是否已有正在运行的任务
             running_log = BackupLog.query.filter_by(
                 task_id=task_id,
                 status='running'
             ).first()
-            
+
             if running_log:
                 return False, "备份任务正在运行中"
-            
-            # 获取任务的存储配置
-            storage_configs = []
-            if task.task_storage_configs:
-                # 使用新的多存储配置
-                for task_storage_config in task.task_storage_configs:
-                    storage_configs.append({
-                        'storage_config': task_storage_config.storage_config,
-                        'remote_path': task_storage_config.remote_path
-                    })
-            elif task.storage_config_id:
-                # 向后兼容：使用旧的单存储配置
-                storage_configs.append({
-                    'storage_config': task.storage_config,
-                    'remote_path': task.remote_path
-                })
 
-            if not storage_configs:
-                return False, "任务没有配置存储位置"
+            # 启动异步备份任务
+            import threading
+            from flask import current_app
 
-            # 执行备份到所有存储配置
-            all_success = True
-            all_messages = []
+            # 获取当前应用实例，传递给异步线程
+            app = current_app._get_current_object()
 
-            for config_info in storage_configs:
-                storage_config = config_info['storage_config']
-                remote_path = config_info['remote_path']
+            backup_thread = threading.Thread(
+                target=self._execute_backup_task_async,
+                args=(app, task_id, manual),
+                daemon=True
+            )
+            backup_thread.start()
 
-                # 为每个存储配置创建单独的备份日志
-                log = BackupLog(
-                    task_id=task_id,
-                    status='running',
-                    start_time=self._get_local_time(),
-                    storage_config_id=storage_config.id,
-                    remote_path=remote_path
-                )
-                db.session.add(log)
-                db.session.flush()
+            return True, f"备份任务 '{task.name}' 已开始执行"
 
-                try:
-                    # 执行备份到当前存储配置
-                    success, message = self._execute_backup_to_storage(task, log, storage_config, remote_path)
-
-                    # 更新日志状态
-                    log.status = 'success' if success else 'failed'
-                    log.end_time = self._get_local_time()
-                    if not success:
-                        log.error_message = message
-                        all_success = False
-
-                    all_messages.append(f"{storage_config.name}: {message}")
-                    self.logger.info(f"Backup to {storage_config.name}: {message}")
-
-                except Exception as e:
-                    # 更新日志为失败状态
-                    log.status = 'failed'
-                    log.end_time = self._get_local_time()
-                    log.error_message = str(e)
-                    all_success = False
-                    all_messages.append(f"{storage_config.name}: 备份失败 - {str(e)}")
-                    self.logger.error(f"Backup to {storage_config.name} failed: {e}")
-
-            # 更新任务的最后运行时间
-            task.last_run_at = self._get_local_time()
-            if not manual and task.cron_expression:
-                task.next_run_at = self._calculate_next_run_time(task.cron_expression)
-
-            db.session.commit()
-
-            # 返回总体结果
-            final_message = "; ".join(all_messages)
-            self.logger.info(f"Backup task {task.name} completed. Overall success: {all_success}")
-            return all_success, final_message
         except Exception as e:
-            db.session.rollback()
-            self.logger.error(f"Failed to run backup task: {e}")
+            self.logger.error(f"Failed to start backup task {task_id}: {e}")
             return False, f"启动备份任务失败: {str(e)}"
+
+    def _execute_backup_task_async(self, app, task_id: int, manual: bool = False):
+        """异步执行备份任务的实际逻辑"""
+        with app.app_context():
+            try:
+                task = BackupTask.query.get(task_id)
+                if not task:
+                    self.logger.error(f"Backup task {task_id} not found")
+                    return
+
+                # 获取任务的存储配置
+                storage_configs = []
+                if task.task_storage_configs:
+                    # 使用新的多存储配置
+                    for task_storage_config in task.task_storage_configs:
+                        storage_configs.append({
+                            'storage_config': task_storage_config.storage_config,
+                            'remote_path': task_storage_config.remote_path
+                        })
+                elif task.storage_config_id:
+                    # 向后兼容：使用旧的单存储配置
+                    storage_configs.append({
+                        'storage_config': task.storage_config,
+                        'remote_path': task.remote_path
+                    })
+
+                if not storage_configs:
+                    self.logger.error(f"Task {task_id} has no storage configurations")
+                    return
+
+                # 执行备份到所有存储配置
+                all_success = True
+                all_messages = []
+
+                for config_info in storage_configs:
+                    storage_config = config_info['storage_config']
+                    remote_path = config_info['remote_path']
+
+                    # 为每个存储配置创建单独的备份日志
+                    log = BackupLog(
+                        task_id=task_id,
+                        status='running',
+                        start_time=self._get_local_time(),
+                        storage_config_id=storage_config.id,
+                        remote_path=remote_path
+                    )
+                    db.session.add(log)
+                    db.session.commit()  # 立即提交，确保日志可见
+
+                    try:
+                        # 执行备份到当前存储配置
+                        success, message = self._execute_backup_to_storage(task, log, storage_config, remote_path)
+
+                        # 更新日志状态
+                        log.status = 'success' if success else 'failed'
+                        log.end_time = self._get_local_time()
+                        if not success:
+                            log.error_message = message
+                            all_success = False
+
+                        all_messages.append(f"{storage_config.name}: {message}")
+                        self.logger.info(f"Backup to {storage_config.name}: {message}")
+
+                    except Exception as e:
+                        # 更新日志为失败状态
+                        log.status = 'failed'
+                        log.end_time = self._get_local_time()
+                        log.error_message = str(e)
+                        all_success = False
+                        all_messages.append(f"{storage_config.name}: 备份失败 - {str(e)}")
+                        self.logger.error(f"Backup to {storage_config.name} failed: {e}")
+
+                    # 立即提交每个存储配置的结果
+                    db.session.commit()
+
+                # 更新任务的最后运行时间
+                task.last_run_at = self._get_local_time()
+                if not manual and task.cron_expression:
+                    task.next_run_at = self._calculate_next_run_time(task.cron_expression)
+
+                db.session.commit()
+
+                # 记录总体结果
+                final_message = "; ".join(all_messages)
+                self.logger.info(f"Backup task {task.name} completed. Overall success: {all_success}")
+
+            except Exception as e:
+                self.logger.error(f"Failed to execute backup task {task_id}: {e}")
+                # 如果有未完成的日志，标记为失败
+                try:
+                    running_logs = BackupLog.query.filter_by(task_id=task_id, status='running').all()
+                    for log in running_logs:
+                        log.status = 'failed'
+                        log.end_time = self._get_local_time()
+                        log.error_message = f"备份任务执行异常: {str(e)}"
+                    db.session.commit()
+                except Exception as commit_error:
+                    self.logger.error(f"Failed to update failed logs: {commit_error}")
+                    db.session.rollback()
     
     def _execute_backup_to_storage(self, task: BackupTask, log: BackupLog, storage_config, remote_path: str) -> Tuple[bool, str]:
         """执行具体的备份操作到指定存储配置"""

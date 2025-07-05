@@ -978,20 +978,123 @@ function showCronHelp() {
 }
 
 function runTask(taskId) {
-    if (confirm('确定要立即运行此备份任务吗？\n\n备份过程可能需要一些时间，请耐心等待。')) {
+    if (confirm('确定要立即运行此备份任务吗？\n\n备份任务将在后台异步执行，您可以在备份日志中查看实时进度。')) {
         // 显示加载状态
         const button = event.target.closest('button');
         const originalText = button.innerHTML;
-        button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>运行中...';
+        button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>启动中...';
         button.disabled = true;
 
-        // 创建表单并提交
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = `/backup-tasks/${taskId}/run`;
-        document.body.appendChild(form);
-        form.submit();
+        // 使用 AJAX 提交请求
+        fetch(`/backup-tasks/${taskId}/run`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // 显示成功消息
+                showNotification('success', data.message || '备份任务已开始执行');
+
+                // 开始监控任务状态
+                startTaskStatusMonitoring(taskId);
+
+                // 更新按钮状态
+                button.innerHTML = '<i class="bi bi-play-circle me-1"></i>运行中...';
+                button.classList.remove('btn-success');
+                button.classList.add('btn-warning');
+            } else {
+                // 显示错误消息
+                showNotification('error', data.message || '启动备份任务失败');
+
+                // 恢复按钮状态
+                button.innerHTML = originalText;
+                button.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotification('error', '启动备份任务时发生错误');
+
+            // 恢复按钮状态
+            button.innerHTML = originalText;
+            button.disabled = false;
+        });
     }
+}
+
+// 监控任务状态
+function startTaskStatusMonitoring(taskId) {
+    const checkStatus = () => {
+        fetch(`/api/backup-tasks/${taskId}/status`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.is_running) {
+                    // 任务仍在运行，继续监控
+                    setTimeout(checkStatus, 3000); // 每3秒检查一次
+
+                    // 更新运行状态显示
+                    updateTaskRunningStatus(taskId, data.running_logs);
+                } else {
+                    // 任务完成，恢复按钮状态
+                    const button = document.querySelector(`button[onclick="runTask(${taskId})"]`);
+                    if (button) {
+                        button.innerHTML = '<i class="bi bi-play-circle me-1"></i>运行';
+                        button.classList.remove('btn-warning');
+                        button.classList.add('btn-success');
+                        button.disabled = false;
+                    }
+
+                    // 显示完成通知
+                    if (data.latest_log) {
+                        const status = data.latest_log.status;
+                        const message = status === 'success' ? '备份任务执行成功' : '备份任务执行失败';
+                        showNotification(status === 'success' ? 'success' : 'error', message);
+                    }
+
+                    // 刷新页面以显示最新状态
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                }
+            })
+            .catch(error => {
+                console.error('Status check error:', error);
+                // 停止监控
+            });
+    };
+
+    // 开始监控
+    setTimeout(checkStatus, 2000); // 2秒后开始第一次检查
+}
+
+// 更新任务运行状态显示
+function updateTaskRunningStatus(taskId, runningLogs) {
+    // 这里可以添加更详细的运行状态显示逻辑
+    // 比如显示正在备份到哪个存储配置等
+}
+
+// 显示通知
+function showNotification(type, message) {
+    // 创建通知元素
+    const notification = document.createElement('div');
+    notification.className = `alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show position-fixed`;
+    notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+    notification.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+
+    document.body.appendChild(notification);
+
+    // 自动移除通知
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.remove();
+        }
+    }, 5000);
 }
 
 function deleteTask(taskId, taskName) {

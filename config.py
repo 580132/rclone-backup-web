@@ -9,8 +9,9 @@ class Config:
     if os.environ.get('DATABASE_URL'):
         SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
     else:
-        # 确保数据库文件在data目录中
-        db_path = os.path.join('data', 'database.db')
+        # 确保数据库文件在data目录中，使用绝对路径
+        base_dir = os.path.abspath(os.path.dirname(__file__))
+        db_path = os.path.join(base_dir, 'data', 'database.db')
         SQLALCHEMY_DATABASE_URI = f'sqlite:///{db_path}'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
