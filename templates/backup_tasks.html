@@ -289,9 +289,9 @@
         <p class="text-muted mb-0">管理和监控备份任务</p>
     </div>
     <div>
-        <button type="button" class="btn btn-gradient" data-bs-toggle="modal" data-bs-target="#addTaskModal">
+        <a href="{{ url_for('add_backup_task') }}" class="btn btn-gradient">
             <i class="bi bi-plus-circle me-2"></i>创建备份任务
-        </button>
+        </a>
     </div>
 </div>
 
@@ -498,9 +498,9 @@
                 <h4 class="mt-3 text-muted">暂无备份任务</h4>
                 <p class="text-muted">请创建第一个备份任务开始使用</p>
                 {% if storage_configs %}
-                <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTaskModal">
+                <a href="{{ url_for('add_backup_task') }}" class="btn btn-primary">
                     <i class="bi bi-plus-circle"></i> 创建第一个备份任务
-                </button>
+                </a>
                 {% else %}
                 <p class="text-warning">
                     <i class="bi bi-exclamation-triangle"></i> 

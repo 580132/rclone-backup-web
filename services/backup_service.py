@@ -29,7 +29,167 @@ class BackupService:
 
         # 确保临时目录存在
         os.makedirs(self.temp_dir, exist_ok=True)
-    
+
+    def _cleanup_zombie_logs(self):
+        """清理僵尸状态的备份日志（启动时调用）"""
+        try:
+            # 查找所有状态为running的日志
+            running_logs = BackupLog.query.filter_by(status='running').all()
+
+            if not running_logs:
+                self.logger.info("启动检查：没有发现僵尸任务")
+                return
+
+            self.logger.warning(f"启动检查：发现 {len(running_logs)} 个僵尸任务，开始清理...")
+
+            cleaned_count = 0
+            task_ids_to_restart = set()
+
+            for log in running_logs:
+                try:
+                    # 标记日志为失败
+                    log.status = 'failed'
+                    log.end_time = self._get_local_time()
+                    log.error_message = '应用重启时检测到任务异常中断，已自动标记为失败'
+
+                    # 记录需要重新启动的任务ID
+                    if log.task_id:
+                        task_ids_to_restart.add(log.task_id)
+
+                    cleaned_count += 1
+                    self.logger.info(f"清理僵尸日志: 任务ID={log.task_id}, 日志ID={log.id}")
+
+                except Exception as e:
+                    self.logger.error(f"清理日志 {log.id} 时出错: {e}")
+
+            # 提交数据库更改
+            db.session.commit()
+            self.logger.info(f"启动清理完成：成功清理 {cleaned_count} 个僵尸任务")
+
+            # 自动重新启动任务
+            if task_ids_to_restart:
+                self.logger.info(f"准备重新启动 {len(task_ids_to_restart)} 个任务...")
+
+                # 延迟重启，确保应用完全启动
+                import threading
+                import time
+
+                def delayed_restart():
+                    time.sleep(5)  # 等待5秒确保应用完全启动
+                    restarted_count = 0
+
+                    for task_id in task_ids_to_restart:
+                        try:
+                            task = BackupTask.query.get(task_id)
+                            if task:
+                                self.logger.info(f"重新启动任务: {task.name} (ID: {task_id})")
+                                success, message = self.execute_backup_task(task_id, manual=True)
+                                if success:
+                                    restarted_count += 1
+                                    self.logger.info(f"任务 {task.name} 重新启动成功")
+                                else:
+                                    self.logger.error(f"任务 {task.name} 重新启动失败: {message}")
+                            else:
+                                self.logger.warning(f"任务ID {task_id} 不存在，跳过重新启动")
+                        except Exception as e:
+                            self.logger.error(f"重新启动任务 {task_id} 时出错: {e}")
+
+                    self.logger.info(f"延迟重启完成：重新启动 {restarted_count} 个任务")
+
+                restart_thread = threading.Thread(target=delayed_restart, daemon=True)
+                restart_thread.start()
+
+        except Exception as e:
+            self.logger.error(f"清理僵尸任务时出错: {e}", exc_info=True)
+            try:
+                db.session.rollback()
+            except:
+                pass
+
+    @staticmethod
+    def cleanup_zombie_tasks_on_startup():
+        """应用启动时清理僵尸任务的静态方法"""
+        try:
+            from models import BackupLog, BackupTask
+            import logging
+
+            logger = logging.getLogger(__name__)
+
+            # 查找所有状态为running的日志
+            running_logs = BackupLog.query.filter_by(status='running').all()
+
+            if not running_logs:
+                logger.info("启动检查：没有发现僵尸任务")
+                return 0, 0
+
+            logger.warning(f"启动检查：发现 {len(running_logs)} 个僵尸任务，开始清理...")
+
+            cleaned_count = 0
+            task_ids_to_restart = set()
+
+            # 获取当前时间
+            from datetime import datetime
+            import pytz
+            local_tz = pytz.timezone('Asia/Shanghai')
+            current_time = datetime.now(local_tz).replace(tzinfo=None)
+
+            for log in running_logs:
+                try:
+                    # 标记日志为失败
+                    log.status = 'failed'
+                    log.end_time = current_time
+                    log.error_message = '应用重启时检测到任务异常中断，已自动标记为失败'
+
+                    # 记录需要重新启动的任务ID
+                    if log.task_id:
+                        task_ids_to_restart.add(log.task_id)
+
+                    cleaned_count += 1
+                    logger.info(f"清理僵尸日志: 任务ID={log.task_id}, 日志ID={log.id}")
+
+                except Exception as e:
+                    logger.error(f"清理日志 {log.id} 时出错: {e}")
+
+            # 提交数据库更改
+            db.session.commit()
+            logger.info(f"启动清理完成：成功清理 {cleaned_count} 个僵尸任务")
+
+            # 自动重新启动任务
+            restarted_count = 0
+            if task_ids_to_restart:
+                logger.info(f"准备重新启动 {len(task_ids_to_restart)} 个任务...")
+
+                # 创建备份服务实例来重新启动任务
+                backup_service = BackupService()
+
+                for task_id in task_ids_to_restart:
+                    try:
+                        task = BackupTask.query.get(task_id)
+                        if task:
+                            logger.info(f"重新启动任务: {task.name} (ID: {task_id})")
+                            success, message = backup_service.execute_backup_task(task_id, manual=True)
+                            if success:
+                                restarted_count += 1
+                                logger.info(f"任务 {task.name} 重新启动成功")
+                            else:
+                                logger.error(f"任务 {task.name} 重新启动失败: {message}")
+                        else:
+                            logger.warning(f"任务ID {task_id} 不存在，跳过重新启动")
+                    except Exception as e:
+                        logger.error(f"重新启动任务 {task_id} 时出错: {e}")
+
+            logger.info(f"僵尸任务处理完成：清理 {cleaned_count} 个，重新启动 {restarted_count} 个")
+            return cleaned_count, restarted_count
+
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"清理僵尸任务时出错: {e}", exc_info=True)
+            try:
+                db.session.rollback()
+            except:
+                pass
+            return 0, 0
+
     def create_backup_task(self, task_data: Dict) -> Tuple[bool, str, Optional[BackupTask]]:
         """创建备份任务"""
         try:
@@ -159,10 +319,16 @@ class BackupService:
         """异步执行备份任务的实际逻辑"""
         with app.app_context():
             try:
+                self.logger.info(f"异步备份任务开始执行 - 任务ID: {task_id}, 手动执行: {manual}")
+
                 task = BackupTask.query.get(task_id)
                 if not task:
                     self.logger.error(f"Backup task {task_id} not found")
                     return
+
+                self.logger.info(f"Starting backup task: {task.name} (ID: {task_id})")
+                self.logger.debug(f"任务配置 - 源路径: {task.source_path}, 压缩: {task.compression_enabled}, "
+                                f"加密: {task.encryption_enabled}, 保留数量: {task.retention_count}")
 
                 # 获取任务的存储配置
                 storage_configs = []
@@ -184,13 +350,16 @@ class BackupService:
                     self.logger.error(f"Task {task_id} has no storage configurations")
                     return
 
+                self.logger.info(f"找到 {len(storage_configs)} 个存储配置")
                 # 执行备份到所有存储配置
                 all_success = True
                 all_messages = []
 
-                for config_info in storage_configs:
+                for i, config_info in enumerate(storage_configs):
                     storage_config = config_info['storage_config']
                     remote_path = config_info['remote_path']
+
+                    self.logger.info(f"开始处理存储配置 {i+1}/{len(storage_configs)}: {storage_config.name}")
 
                     # 为每个存储配置创建单独的备份日志
                     log = BackupLog(
@@ -202,9 +371,11 @@ class BackupService:
                     )
                     db.session.add(log)
                     db.session.commit()  # 立即提交，确保日志可见
+                    self.logger.debug(f"创建备份日志记录，ID: {log.id}")
 
                     try:
                         # 执行备份到当前存储配置
+                        self.logger.info(f"开始执行备份到存储: {storage_config.name}")
                         success, message = self._execute_backup_to_storage(task, log, storage_config, remote_path)
 
                         # 更新日志状态
@@ -219,15 +390,16 @@ class BackupService:
 
                     except Exception as e:
                         # 更新日志为失败状态
+                        self.logger.error(f"备份到 {storage_config.name} 时发生异常: {e}", exc_info=True)
                         log.status = 'failed'
                         log.end_time = self._get_local_time()
                         log.error_message = str(e)
                         all_success = False
                         all_messages.append(f"{storage_config.name}: 备份失败 - {str(e)}")
-                        self.logger.error(f"Backup to {storage_config.name} failed: {e}")
 
                     # 立即提交每个存储配置的结果
                     db.session.commit()
+                    self.logger.debug(f"存储配置 {storage_config.name} 处理完成")
 
                 # 更新任务的最后运行时间
                 task.last_run_at = self._get_local_time()
@@ -239,12 +411,14 @@ class BackupService:
                 # 记录总体结果
                 final_message = "; ".join(all_messages)
                 self.logger.info(f"Backup task {task.name} completed. Overall success: {all_success}")
+                self.logger.info(f"备份任务完全结束 - 任务ID: {task_id}")
 
             except Exception as e:
-                self.logger.error(f"Failed to execute backup task {task_id}: {e}")
+                self.logger.error(f"Failed to execute backup task {task_id}: {e}", exc_info=True)
                 # 如果有未完成的日志，标记为失败
                 try:
                     running_logs = BackupLog.query.filter_by(task_id=task_id, status='running').all()
+                    self.logger.warning(f"发现 {len(running_logs)} 个未完成的日志，将标记为失败")
                     for log in running_logs:
                         log.status = 'failed'
                         log.end_time = self._get_local_time()
@@ -271,21 +445,27 @@ class BackupService:
             base_name = f"{task.name}_{timestamp}"
             
             if task.compression_enabled:
+                self.logger.info(f"开始压缩文件，类型: {task.compression_type}")
                 # 压缩文件
                 if task.compression_type == 'tar.gz':
                     temp_file = os.path.join(self.temp_dir, f"{base_name}.tar.gz")
+                    self.logger.debug(f"创建tar.gz压缩包: {temp_file}")
                     success, message = self._create_tar_archive(actual_source_path, temp_file)
                 elif task.compression_type == 'zip':
                     temp_file = os.path.join(self.temp_dir, f"{base_name}.zip")
+                    self.logger.debug(f"创建zip压缩包: {temp_file}")
                     success, message = self._create_zip_archive(actual_source_path, temp_file)
                 else:
                     return False, f"不支持的压缩格式: {task.compression_type}"
-                
+
                 if not success:
+                    self.logger.error(f"压缩失败: {message}")
                     return False, message
-                
+
                 compressed_size = os.path.getsize(temp_file)
                 log.compressed_size = compressed_size
+                self.logger.info(f"压缩完成，压缩后大小: {compressed_size / (1024*1024):.2f} MB, "
+                               f"压缩比: {((original_size - compressed_size) / original_size * 100):.1f}%")
             else:
                 # 不压缩，直接复制
                 if os.path.isfile(actual_source_path):
@@ -298,18 +478,37 @@ class BackupService:
             
             # 加密文件（如果启用）
             if task.encryption_enabled and task.encryption_password:
+                self.logger.info(f"开始加密文件: {temp_file}")
                 encrypted_file = temp_file + '.encrypted'
+
+                # 记录加密前的文件大小和可用内存
+                pre_encrypt_size = os.path.getsize(temp_file)
+                self.logger.info(f"加密前文件大小: {pre_encrypt_size / (1024*1024):.2f} MB")
+
+                try:
+                    import psutil
+                    memory_info = psutil.virtual_memory()
+                    self.logger.info(f"系统内存状态 - 总计: {memory_info.total / (1024*1024*1024):.2f} GB, "
+                                   f"可用: {memory_info.available / (1024*1024*1024):.2f} GB, "
+                                   f"使用率: {memory_info.percent}%")
+                except ImportError:
+                    self.logger.debug("psutil未安装，无法获取内存信息")
+
                 success, message = self._encrypt_file(temp_file, encrypted_file, task.encryption_password)
                 if not success:
+                    self.logger.error(f"文件加密失败: {message}")
                     return False, message
-                
+
+                self.logger.info("文件加密成功，删除未加密文件")
                 # 删除未加密文件
                 os.remove(temp_file)
                 temp_file = encrypted_file
-                
+
                 log.final_size = os.path.getsize(temp_file)
+                self.logger.info(f"加密后文件大小: {log.final_size / (1024*1024):.2f} MB")
             else:
                 log.final_size = log.compressed_size
+                self.logger.debug("未启用加密，跳过加密步骤")
             
             db.session.commit()
             
@@ -382,27 +581,111 @@ class BackupService:
             return False, f"压缩失败: {str(e)}"
     
     def _encrypt_file(self, input_file: str, output_file: str, password: str) -> Tuple[bool, str]:
-        """加密文件"""
+        """加密文件 - 支持大文件流式处理"""
         try:
+            file_size = os.path.getsize(input_file)
+            self.logger.info(f"开始加密文件: {input_file}, 大小: {file_size / (1024*1024):.2f} MB")
+
             # 解密存储的密码
             decrypted_password = self._decrypt_password(password)
-            
+            self.logger.debug("密码解密完成")
+
             # 生成密钥
             key = self._generate_key_from_password(decrypted_password)
-            fernet = Fernet(key)
-            
-            with open(input_file, 'rb') as infile:
-                data = infile.read()
-            
-            encrypted_data = fernet.encrypt(data)
-            
-            with open(output_file, 'wb') as outfile:
-                outfile.write(encrypted_data)
-            
-            return True, "加密完成"
+            self.logger.debug("加密密钥生成完成")
+
+            # 对于大文件（>100MB），使用流式加密
+            if file_size > 100 * 1024 * 1024:  # 100MB
+                self.logger.info(f"大文件检测，使用流式加密处理")
+                return self._encrypt_large_file_stream(input_file, output_file, key)
+            else:
+                # 小文件使用原有方式
+                self.logger.info("小文件，使用内存加密")
+                fernet = Fernet(key)
+
+                with open(input_file, 'rb') as infile:
+                    data = infile.read()
+                    self.logger.debug(f"文件读取完成，大小: {len(data)} 字节")
+
+                encrypted_data = fernet.encrypt(data)
+                self.logger.debug(f"加密完成，加密后大小: {len(encrypted_data)} 字节")
+
+                with open(output_file, 'wb') as outfile:
+                    outfile.write(encrypted_data)
+
+                self.logger.info("文件加密完成")
+                return True, "加密完成"
+
         except Exception as e:
+            self.logger.error(f"加密文件时出错: {e}", exc_info=True)
             return False, f"加密失败: {str(e)}"
-    
+
+    def _encrypt_large_file_stream(self, input_file: str, output_file: str, key: bytes) -> Tuple[bool, str]:
+        """流式加密大文件"""
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from cryptography.hazmat.backends import default_backend
+            import os
+
+            self.logger.info("开始流式加密大文件")
+
+            # 生成随机IV
+            iv = os.urandom(16)  # AES需要16字节IV
+            self.logger.debug("生成IV完成")
+
+            # 创建AES加密器
+            cipher = Cipher(algorithms.AES(key[:32]), modes.CBC(iv), backend=default_backend())
+            encryptor = cipher.encryptor()
+            self.logger.debug("创建AES加密器完成")
+
+            chunk_size = 8192 * 1024  # 8MB chunks
+            total_size = os.path.getsize(input_file)
+            processed_size = 0
+
+            with open(input_file, 'rb') as infile, open(output_file, 'wb') as outfile:
+                # 写入IV到文件开头
+                outfile.write(iv)
+                self.logger.debug("写入IV到输出文件")
+
+                while True:
+                    chunk = infile.read(chunk_size)
+                    if not chunk:
+                        break
+
+                    processed_size += len(chunk)
+                    progress = (processed_size / total_size) * 100
+
+                    # 对于最后一个块，需要进行PKCS7填充
+                    if len(chunk) < chunk_size:
+                        # 计算需要填充的字节数
+                        padding_length = 16 - (len(chunk) % 16)
+                        if padding_length == 16:
+                            padding_length = 0
+
+                        if padding_length > 0:
+                            chunk += bytes([padding_length] * padding_length)
+                            self.logger.debug(f"最后块填充: {padding_length} 字节")
+
+                    # 加密块
+                    encrypted_chunk = encryptor.update(chunk)
+                    outfile.write(encrypted_chunk)
+
+                    if processed_size % (100 * 1024 * 1024) == 0:  # 每100MB记录一次进度
+                        self.logger.info(f"加密进度: {progress:.1f}% ({processed_size / (1024*1024):.1f} MB)")
+
+                # 完成加密
+                final_chunk = encryptor.finalize()
+                if final_chunk:
+                    outfile.write(final_chunk)
+
+                self.logger.info(f"流式加密完成，处理了 {processed_size / (1024*1024):.2f} MB")
+
+            return True, "流式加密完成"
+
+        except Exception as e:
+            self.logger.error(f"流式加密失败: {e}", exc_info=True)
+            return False, f"流式加密失败: {str(e)}"
+
     def _encrypt_password(self, password: str) -> str:
         """加密密码用于存储"""
         # 这里使用简单的base64编码，实际应用中应使用更安全的方法
@@ -414,9 +697,10 @@ class BackupService:
     
     def _generate_key_from_password(self, password: str) -> bytes:
         """从密码生成加密密钥"""
-        # 使用密码的SHA256哈希作为密钥
+        # 使用密码的SHA256哈希作为密钥，直接返回32字节密钥
         key = hashlib.sha256(password.encode()).digest()
-        return base64.urlsafe_b64encode(key)
+        self.logger.debug(f"生成密钥长度: {len(key)} 字节")
+        return key
     
     def _calculate_next_run_time(self, cron_expression: str) -> Optional[datetime]:
         """计算下次运行时间"""

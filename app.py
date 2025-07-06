@@ -493,7 +493,7 @@ def create_app(config_name='default'):
                              tasks=tasks,
                              storage_configs=storage_configs)
 
-    @app.route('/backup-tasks', methods=['POST'])
+    @app.route('/backup-tasks/add', methods=['POST'])
     @login_required
     def create_backup_task():
         """创建备份任务"""
@@ -565,6 +565,24 @@ def create_app(config_name='default'):
 
         return redirect(url_for('backup_tasks'))
 
+    @app.route('/backup-tasks/add')
+    @login_required
+    def add_backup_task():
+        """新建备份任务页面"""
+        try:
+            storage_configs = StorageConfig.query.filter_by(is_active=True).all()
+            if not storage_configs:
+                flash('请先配置存储，然后创建备份任务', 'warning')
+                return redirect(url_for('storage_configs'))
+
+            return render_template('backup_task_form.html',
+                                 task=None,
+                                 storage_configs=storage_configs)
+        except Exception as e:
+            app.logger.error(f"Failed to load add task page: {e}")
+            flash('加载新建页面时出错', 'error')
+            return redirect(url_for('backup_tasks'))
+
     @app.route('/backup-tasks/<int:task_id>/edit')
     @login_required
     def edit_backup_task(task_id):
@@ -576,7 +594,7 @@ def create_app(config_name='default'):
                 return redirect(url_for('backup_tasks'))
 
             storage_configs = StorageConfig.query.filter_by(is_active=True).all()
-            return render_template('edit_backup_task.html',
+            return render_template('backup_task_form.html',
                                  task=task,
                                  storage_configs=storage_configs)
         except Exception as e:
@@ -848,12 +866,25 @@ def create_app(config_name='default'):
 
             # 添加正在运行的日志信息
             for log in running_logs:
+                # 安全地获取存储配置名称
+                storage_config_name = 'Unknown'
+                try:
+                    if hasattr(log, 'storage_config') and log.storage_config:
+                        storage_config_name = log.storage_config.name
+                    elif log.storage_config_id:
+                        # 如果关系映射有问题，直接查询
+                        storage_config = StorageConfig.query.get(log.storage_config_id)
+                        if storage_config:
+                            storage_config_name = storage_config.name
+                except Exception:
+                    storage_config_name = 'Unknown'
+
                 status_info['running_logs'].append({
                     'id': log.id,
                     'status': log.status,
                     'start_time': log.start_time.isoformat(),
-                    'storage_config_name': log.storage_config.name if log.storage_config else 'Unknown',
-                    'remote_path': log.remote_path
+                    'storage_config_name': storage_config_name,
+                    'remote_path': log.remote_path or ''
                 })
 
             if latest_log:
@@ -1684,6 +1715,18 @@ def init_database(app):
             except Exception as e:
                 print(f"数据验证时出错: {e}")
 
+            # 清理僵尸备份任务
+            try:
+                print("检查并清理僵尸备份任务...")
+                from services.backup_service import BackupService
+                cleaned_count, restarted_count = BackupService.cleanup_zombie_tasks_on_startup()
+                if cleaned_count > 0:
+                    print(f"✓ 清理了 {cleaned_count} 个僵尸任务，重新启动了 {restarted_count} 个任务")
+                else:
+                    print("✓ 没有发现僵尸任务")
+            except Exception as e:
+                print(f"清理僵尸任务时出错: {e}")
+
         except Exception as e:
             print(f"数据库初始化失败: {e}")
             import traceback
@@ -1693,22 +1736,38 @@ def init_database(app):
 def _check_and_migrate_database():
     """检查并执行数据库迁移"""
     try:
-        # 检查storage_configs表是否有test_path字段
         inspector = db.inspect(db.engine)
 
+        # 检查storage_configs表是否有test_path字段
         if 'storage_configs' in inspector.get_table_names():
             columns = [col['name'] for col in inspector.get_columns('storage_configs')]
 
             if 'test_path' not in columns:
                 print("检测到需要添加test_path字段，执行迁移...")
-
-                # 执行ALTER TABLE添加字段
                 db.engine.execute('ALTER TABLE storage_configs ADD COLUMN test_path VARCHAR(255)')
                 print("✓ 成功添加test_path字段到storage_configs表")
             else:
                 print("✓ storage_configs表结构已是最新版本")
         else:
             print("✓ storage_configs表不存在，将通过create_all创建")
+
+        # 检查backup_logs表是否有storage_config_id和remote_path字段
+        if 'backup_logs' in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns('backup_logs')]
+
+            if 'storage_config_id' not in columns:
+                print("检测到需要添加storage_config_id字段，执行迁移...")
+                db.engine.execute('ALTER TABLE backup_logs ADD COLUMN storage_config_id INTEGER')
+                print("✓ 成功添加storage_config_id字段到backup_logs表")
+
+            if 'remote_path' not in columns:
+                print("检测到需要添加remote_path字段，执行迁移...")
+                db.engine.execute('ALTER TABLE backup_logs ADD COLUMN remote_path VARCHAR(500)')
+                print("✓ 成功添加remote_path字段到backup_logs表")
+
+            print("✓ backup_logs表结构已是最新版本")
+        else:
+            print("✓ backup_logs表不存在，将通过create_all创建")
 
     except Exception as e:
         print(f"数据库迁移检查出错: {e}")

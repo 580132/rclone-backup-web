@@ -51,6 +51,9 @@ class StorageConfig(db.Model):
     # 关联的备份任务
     backup_tasks = db.relationship('BackupTask', backref='storage_config', lazy=True)
 
+    # 关联的备份日志
+    backup_logs = db.relationship('BackupLog', backref='storage_config', lazy=True)
+
     # 关联的配置历史版本
     config_history = db.relationship('StorageConfigHistory', backref='storage_config',
                                    lazy=True, order_by='StorageConfigHistory.version.desc()')
@@ -198,7 +201,7 @@ class BackupLog(db.Model):
     # 错误信息
     error_message = db.Column(db.Text)
     log_details = db.Column(db.Text)  # 详细日志
-    
+
     @property
     def duration(self):
         """计算执行时长"""
