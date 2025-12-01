@@ -1,0 +1,56 @@
+name: Docker CI/CD
+
+on:
+  push:
+    # 只在 main 分支有 push 时触发
+    分支: [ "main" ]
+    # 如果只有 Dockerfile 改变才运行 (可选)
+    paths:
+      - 'Dockerfile'
+      - 'src/**'
+  
+  # 允许手动触发工作流
+  workflow_dispatch:
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: ⬇️ 检出代码
+        uses: actions/checkout@v4
+
+      - name: ⚙️ 设置 QEMU (多平台支持, 可选)
+        uses: docker/setup-qemu-action@v3
+        
+      - name: ⚙️ 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🏷️ 提取 Git 标签/元数据
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_IMAGE_NAME }} # 你的镜像名称, 例如: yourusername/yourrepo
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default}}
+
+      - name: 🔑 登录到 GitHub Packages
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # 使用自动生成的 token
+          
+      - name: 🛠️ 构建并推送 Docker 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true # 推送到仓库
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha # 启用 GitHub Actions 缓存
+          cache-to: type=gha,mode=max # 推送缓存
